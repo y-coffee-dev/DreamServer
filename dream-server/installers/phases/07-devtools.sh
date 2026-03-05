@@ -8,7 +8,7 @@
 # Expects: DRY_RUN, INSTALL_DIR, LOG_FILE, LLM_MODEL, MAX_CONTEXT,
 #           PKG_MANAGER,
 #           ai(), ai_ok(), ai_warn(), log()
-# Provides: (developer tools installed globally)
+# Provides: (developer tools installed to ~/.npm-global)
 #
 # Modder notes:
 #   Add new developer tools or change installation methods here.
@@ -46,9 +46,18 @@ else
     fi
 
     if command -v npm &> /dev/null; then
+        # Set up user-level npm global prefix (no sudo needed)
+        NPM_GLOBAL_DIR="$HOME/.npm-global"
+        if [[ ! -d "$NPM_GLOBAL_DIR" ]]; then
+            mkdir -p "$NPM_GLOBAL_DIR"
+            npm config set prefix "$NPM_GLOBAL_DIR" 2>/dev/null || true
+        fi
+        # Ensure user-level bin is on PATH for this session
+        export PATH="$NPM_GLOBAL_DIR/bin:$PATH"
+
         # Install Claude Code (Anthropic's CLI for Claude)
         if ! command -v claude &> /dev/null; then
-            sudo npm install -g @anthropic-ai/claude-code >> "$LOG_FILE" 2>&1 && \
+            npm install -g @anthropic-ai/claude-code >> "$LOG_FILE" 2>&1 && \
                 ai_ok "Claude Code installed (run 'claude' to start)" || \
                 ai_warn "Claude Code install failed — install later with: npm i -g @anthropic-ai/claude-code"
         else
@@ -57,11 +66,17 @@ else
 
         # Install Codex CLI (OpenAI's terminal agent)
         if ! command -v codex &> /dev/null; then
-            sudo npm install -g @openai/codex >> "$LOG_FILE" 2>&1 && \
+            npm install -g @openai/codex >> "$LOG_FILE" 2>&1 && \
                 ai_ok "Codex CLI installed (run 'codex' to start)" || \
                 ai_warn "Codex CLI install failed — install later with: npm i -g @openai/codex"
         else
             ai_ok "Codex CLI already installed"
+        fi
+
+        # Ensure ~/.npm-global/bin is on PATH permanently
+        if [[ -d "$NPM_GLOBAL_DIR/bin" ]] && ! grep -q 'npm-global' "$HOME/.bashrc" 2>/dev/null; then
+            echo 'export PATH="$HOME/.npm-global/bin:$PATH"' >> "$HOME/.bashrc"
+            ai "Added ~/.npm-global/bin to PATH in ~/.bashrc"
         fi
     else
         ai_warn "npm not available — skipping Claude Code and Codex CLI install"
