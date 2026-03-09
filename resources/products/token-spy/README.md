@@ -118,6 +118,13 @@ openssl rand -base64 32
 - **TimescaleDB**: Time-series database for metrics
 - **Redis**: Caching and rate limiting
 
+
+## Database Backend Modules
+
+- **Canonical DB layer:** `resources/products/token-spy/sidecar/db_backend.py` is the runtime backend API used by the sidecar (`get_db`, `DatabaseBackend`, pool lifecycle, usage/API/provider/tenant models).
+- **Deprecated compatibility module:** `resources/products/token-spy/db_backend.py` is now a thin import-forwarding shim for legacy scripts.
+- **Migration status:** new code should import from `sidecar.db_backend`; the top-level module remains only for backward compatibility and will be removed in a future cleanup once downstream scripts are migrated.
+
 ## Make Commands
 
 ```bash
