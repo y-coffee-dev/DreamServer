@@ -136,6 +136,21 @@ if ext_dir.exists():
         except Exception:
             continue
 
+# Include docker-compose.local.yml for local/hybrid mode (Linux GPU backends only)
+# This gates open-webui on llama-server health — not appropriate for cloud mode
+# (llama-server has no model in cloud mode, so its healthcheck never passes)
+local_mode_overlay = script_dir / "docker-compose.local.yml"
+if local_mode_overlay.exists() and gpu_backend not in ("apple",):
+    dream_mode = ""
+    env_file = script_dir / ".env"
+    if env_file.exists():
+        for line in env_file.read_text().splitlines():
+            if line.startswith("DREAM_MODE="):
+                dream_mode = line.split("=", 1)[1].split("#")[0].strip().strip("\"'")
+                break
+    if dream_mode != "cloud":
+        resolved.append("docker-compose.local.yml")
+
 # Include docker-compose.override.yml if it exists (user customizations)
 override = script_dir / "docker-compose.override.yml"
 if override.exists():
