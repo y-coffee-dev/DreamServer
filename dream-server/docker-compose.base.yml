@@ -147,6 +147,7 @@ services:
       - DREAM_INSTALL_DIR=/dream-server
       - DREAM_DATA_DIR=/data
       - GPU_BACKEND=${GPU_BACKEND:-nvidia}
+      - HOST_RAM_GB=${HOST_RAM_GB:-0}
       - OLLAMA_URL=${LLM_API_URL:-http://llama-server:8080}
       - LLM_MODEL=${LLM_MODEL:-qwen3:30b-a3b}
       - KOKORO_URL=${KOKORO_URL:-http://tts:8880}
