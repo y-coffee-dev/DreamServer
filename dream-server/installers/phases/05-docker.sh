@@ -20,7 +20,30 @@ show_phase 3 6 "Docker Setup" "~2 minutes"
 ai "Preparing container runtime..."
 
 # Ensure package manager is detected
-[[ -z "$PKG_MANAGER" ]] && detect_pkg_manager
+[[ -z "${PKG_MANAGER:-}" ]] && detect_pkg_manager
+
+# Helper wrappers that are safe even if DOCKER_CMD contains spaces (e.g. "sudo docker")
+_docker_cmd_arr() {
+    case "${DOCKER_CMD:-docker}" in
+        "sudo docker") echo "sudo" "docker" ;;
+        *)             echo "docker" ;;
+    esac
+}
+
+docker_run() {
+    # shellcheck disable=SC2207
+    local -a cmd=($(_docker_cmd_arr))
+    "${cmd[@]}" "$@"
+}
+
+docker_compose_run() {
+    # shellcheck disable=SC2207
+    local -a cmd=($(_docker_cmd_arr))
+    "${cmd[@]}" compose "$@"
+}
+
+# Track whether docker group membership is active in this shell
+DOCKER_NEEDS_SUDO=false
 
 if [[ "$SKIP_DOCKER" == "true" ]]; then
     log "Skipping Docker installation (--skip-docker)"
@@ -33,29 +56,39 @@ else
         log "[DRY RUN] Would install Docker via official script"
     else
         tmpfile=$(mktemp /tmp/install-docker.XXXXXX.sh)
-        if ! curl -fsSL https://get.docker.com -o "$tmpfile" || ! sh "$tmpfile"; then
+        if ! curl -fsSL https://get.docker.com -o "$tmpfile" || ! sudo sh "$tmpfile"; then
             rm -f "$tmpfile"
             error "Docker installation failed. Check network connectivity and try again."
         fi
         rm -f "$tmpfile"
-        sudo usermod -aG docker $USER
 
-        # Check if we need to use newgrp or restart
-        if ! groups | grep -q docker; then
-            warn "Docker installed! Group membership requires re-login."
-            warn "Option 1: Log out and back in, then re-run this script with --skip-docker"
-            warn "Option 2: Run 'newgrp docker' in a new terminal, then re-run"
+        # Add the invoking user (not root) to the docker group
+        target_user="${SUDO_USER:-$USER}"
+        sudo usermod -aG docker "$target_user"
+
+        # In most cases group membership won't take effect until a new login shell.
+        if ! id -nG "$target_user" 2>/dev/null | tr ' ' '\n' | grep -qx docker; then
+            DOCKER_NEEDS_SUDO=true
+        fi
+    fi
+fi
+
+# Decide whether to use sudo for the rest of this installer session
+if [[ "${DOCKER_CMD:-}" == "" ]]; then
+    if $DOCKER_NEEDS_SUDO; then
+        warn "Docker installed, but group membership may not be active yet (re-login required)."
+        if [[ "${INTERACTIVE:-true}" == "true" ]]; then
             echo ""
-            read -p "  Try to continue with 'sudo docker' for now? [Y/n] " -r
-            if [[ ! $REPLY =~ ^[Nn]$ ]]; then
-                # Use sudo for remaining docker commands in this session
-                DOCKER_CMD="sudo docker"
-                DOCKER_COMPOSE_CMD="sudo docker compose"
-            else
-                log "Please re-run after logging out and back in."
+            read -p "  Continue this installer using 'sudo docker' for now? [Y/n] " -r
+            if [[ $REPLY =~ ^[Nn]$ ]]; then
+                log "Please re-run after logging out and back in (or after 'newgrp docker')."
                 exit 0
             fi
+        else
+            warn "Non-interactive mode: continuing with 'sudo docker'."
         fi
+        DOCKER_CMD="sudo docker"
+        DOCKER_COMPOSE_CMD="sudo docker compose"
     fi
 fi
 
@@ -64,14 +97,21 @@ DOCKER_CMD="${DOCKER_CMD:-docker}"
 DOCKER_COMPOSE_CMD="${DOCKER_COMPOSE_CMD:-docker compose}"
 
 # Docker Compose check (v2 preferred, v1 fallback)
-if $DOCKER_COMPOSE_CMD version &> /dev/null 2>&1; then
+if docker_compose_run version &> /dev/null 2>&1; then
     ai_ok "Docker Compose v2 available"
 elif command -v docker-compose &> /dev/null; then
-    DOCKER_COMPOSE_CMD="${DOCKER_CMD%-*}-compose"
-    [[ "$DOCKER_CMD" == "sudo docker" ]] && DOCKER_COMPOSE_CMD="sudo docker-compose"
+    if [[ "$DOCKER_CMD" == "sudo docker" ]]; then
+        DOCKER_COMPOSE_CMD="sudo docker-compose"
+    else
+        DOCKER_COMPOSE_CMD="docker-compose"
+    fi
     ai_ok "Docker Compose v1 available (using docker-compose)"
 else
-    if ! $DRY_RUN; then
+    if [[ "$SKIP_DOCKER" == "true" ]]; then
+        warn "Docker Compose not found (docker compose / docker-compose). Install manually or re-run without --skip-docker."
+    elif $DRY_RUN; then
+        log "[DRY RUN] Would install Docker Compose plugin"
+    else
         ai "Installing Docker Compose plugin..."
         pkg_update
         # shellcheck disable=SC2046
