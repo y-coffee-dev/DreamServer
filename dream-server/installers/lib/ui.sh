@@ -201,33 +201,52 @@ pull_with_progress() {
   local count=$3
   local total=$4
   local max_attempts=3
+  local pull_timeout=600  # 10 minutes for large images (CUDA is ~10GB)
   local pull_pid
 
   for attempt in $(seq 1 $max_attempts); do
     if [[ $attempt -gt 1 ]]; then
       printf "  ${AMB}⟳${NC} [$count/$total] Retry attempt $attempt of $max_attempts for $label\n"
-      local backoff=$((5 * (2 ** (attempt - 2))))
+      # Exponential backoff: 2s, 5s, 10s
+      local backoff=$((2 * (2 ** (attempt - 2)) + (attempt - 2)))
       sleep "$backoff"
     fi
 
     local attempt_log
     attempt_log=$(mktemp)
 
-    $DOCKER_CMD pull "$img" >"$attempt_log" 2>&1 &
+    # Wrap docker pull with timeout to prevent indefinite hangs
+    timeout "$pull_timeout" $DOCKER_CMD pull "$img" >"$attempt_log" 2>&1 &
     pull_pid=$!
 
     if spin_task "$pull_pid" "[$count/$total] $label"; then
-      cat "$attempt_log" >> "$LOG_FILE" 2>&1 || true
-      rm -f "$attempt_log"
-      printf "\r  ${BGRN}✓${NC} [$count/$total] %-60s\n" "$label"
-      return 0
+      # Verify image was pulled successfully
+      if $DOCKER_CMD inspect "$img" >/dev/null 2>&1; then
+        cat "$attempt_log" >> "$LOG_FILE" 2>&1 || true
+        rm -f "$attempt_log"
+        printf "\r  ${BGRN}✓${NC} [$count/$total] %-60s\n" "$label"
+        return 0
+      else
+        cat "$attempt_log" >> "$LOG_FILE" 2>&1 || true
+        rm -f "$attempt_log"
+        printf "\r  ${RED}✗${NC} [$count/$total] %-60s (image validation failed)\n" "$label"
+        continue
+      fi
     else
       cat "$attempt_log" >> "$LOG_FILE" 2>&1 || true
 
+      # Check for non-retryable errors
       if grep -qiE 'unauthorized|denied|not[[:space:]-]?found|\b404\b|no space left on device|cannot connect to the docker daemon|is the docker daemon running' "$attempt_log"; then
         rm -f "$attempt_log"
         printf "\r  ${RED}✗${NC} [$count/$total] %-60s (non-retryable error)\n" "$label"
         return 1
+      fi
+
+      # Check for timeout
+      if grep -qiE 'timeout|timed out' "$attempt_log" || ! kill -0 "$pull_pid" 2>/dev/null; then
+        rm -f "$attempt_log"
+        printf "\r  ${RED}✗${NC} [$count/$total] %-60s (network timeout on attempt $attempt)\n" "$label"
+        continue
       fi
 
       rm -f "$attempt_log"
