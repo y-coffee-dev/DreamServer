@@ -68,7 +68,7 @@ estimate_backup_bytes() {
         for p in "${user_data_paths[@]}"; do
             if [[ -d "$DREAM_DIR/$p" ]]; then
                 local b
-                b=$(du -sb "$DREAM_DIR/$p" 2>/dev/null | awk '{print $1}')
+                b=$(du -sk "$DREAM_DIR/$p" 2>/dev/null | awk '{print $1 * 1024}')
                 total=$(( total + ${b:-0} ))
             fi
         done
@@ -78,7 +78,7 @@ estimate_backup_bytes() {
     if [[ "$backup_type" == "full" || "$backup_type" == "config" ]]; then
         if [[ -d "$DREAM_DIR/config" ]]; then
             local b
-            b=$(du -sb "$DREAM_DIR/config" 2>/dev/null | awk '{print $1}')
+            b=$(du -sk "$DREAM_DIR/config" 2>/dev/null | awk '{print $1 * 1024}')
             total=$(( total + ${b:-0} ))
         fi
         for f in "$DREAM_DIR"/.env "$DREAM_DIR"/.version "$DREAM_DIR"/docker-compose*.y*ml "$DREAM_DIR"/dream-preflight.sh "$DREAM_DIR"/dream-update.sh; do
@@ -94,14 +94,14 @@ estimate_backup_bytes() {
     if [[ "$backup_type" == "full" ]]; then
         if [[ -d "$DREAM_DIR/models" ]]; then
             local b
-            b=$(du -sb "$DREAM_DIR/models" 2>/dev/null | awk '{print $1}')
+            b=$(du -sk "$DREAM_DIR/models" 2>/dev/null | awk '{print $1 * 1024}')
             total=$(( total + ${b:-0} ))
         fi
         local -a cache_paths=("data/whisper/cache" "data/kokoro/cache")
         for p in "${cache_paths[@]}"; do
             if [[ -d "$DREAM_DIR/$p" ]]; then
                 local b
-                b=$(du -sb "$DREAM_DIR/$p" 2>/dev/null | awk '{print $1}')
+                b=$(du -sk "$DREAM_DIR/$p" 2>/dev/null | awk '{print $1 * 1024}')
                 total=$(( total + ${b:-0} ))
             fi
         done

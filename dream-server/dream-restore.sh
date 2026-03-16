@@ -45,7 +45,7 @@ free_bytes_for_path() {
 # Estimate the backup size on disk (uncompressed)
 estimate_restore_bytes_dir() {
     local backup_dir="$1"
-    du -sb "$backup_dir" 2>/dev/null | awk '{print $1}'
+    du -sk "$backup_dir" 2>/dev/null | awk '{print $1 * 1024}'
 }
 
 # Estimate restore size for a tar.gz (uncompressed file sizes)
