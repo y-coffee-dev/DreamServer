@@ -331,5 +331,12 @@ esac
 unset _mode
 
 LLAMA_ARG_TENSOR_SPLIT=$(echo "$GPU_ASSIGNMENT_JSON" | jq -r '
-  .gpu_assignment.services.llama_server.parallelism.tensor_split // [] |
-  if length > 0 then map(tostring) | join(",") else "" end')
+  .gpu_assignment.services.llama_server as $svc |
+  ($svc.parallelism.tensor_split // []) as $ts |
+  if ($ts | length) > 0
+  then $ts | map(tostring) | join(",")
+  else ($svc.gpus | length) as $n |
+    if $n > 1 then [range($n) | 1] | map(tostring) | join(",")
+    else "1"
+    end
+  end')
