@@ -303,7 +303,7 @@ if [[ $GPU_COUNT -gt 1 && "$GPU_BACKEND" == "nvidia" ]]; then
         }
         
         # Extract key topology information for tier assignment
-        if command -v jq &>/dev/null && [[ -n "$GPU_TOPOLOGY_JSON" && "$GPU_TOPOLOGY_JSON" != "{}" ]]; then
+        if [[ -n "$GPU_TOPOLOGY_JSON" && "$GPU_TOPOLOGY_JSON" != "{}" ]]; then
             GPU_HAS_NVLINK=$(echo "$GPU_TOPOLOGY_JSON" | jq -r '[.links[] | select(.link_type | startswith("NV"))] | length > 0')
             GPU_TOTAL_VRAM=$(echo "$GPU_TOPOLOGY_JSON" | jq -r '[.gpus[].memory_gb] | add * 1024 | floor')
             log "Multi-GPU topology: NVLink=$GPU_HAS_NVLINK, Total VRAM=${GPU_TOTAL_VRAM}MB"
