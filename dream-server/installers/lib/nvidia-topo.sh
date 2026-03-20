@@ -3,11 +3,13 @@
 # Dream Server Installer — NVIDIA GPU Topology Detection
 # ============================================================================
 # Part of: installers/lib/
-# Purpose: Detect NVIDIA Multi-GPU topology as well as basic GPU info 
+# Purpose: Detect NVIDIA Multi-GPU topology as well as basic GPU info
 #          and return as JSON. This script can be used standalone or
 #          sourced by the main detection.sh script.
 #
-# Provides: parse_nvidia_topo_matrix(), detect_nvidia(), link_rank(), link_label()
+# Expects: nvidia-smi, warn(), err(), LINK_RANK
+# Provides: parse_nvidia_topo_matrix(), detect_nvidia_topo(), link_rank(),
+#           link_label(), get_rank(), json_str()
 #
 # Modder notes:
 #   This script handles NVIDIA-specific topology detection including NVLink,
@@ -15,7 +17,6 @@
 #   by the multi-GPU strategy selection logic.
 # ============================================================================
 
-command_exists() { command -v "$1" &>/dev/null; }
 json_str() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
 link_rank() {
   case "$1" in
@@ -136,7 +137,7 @@ detect_nvidia_topo() {
 
   # NUMA info
   local numa_json="{}"
-  if command_exists numactl; then
+  if command -v numactl &>/dev/null; then
     local numa_nodes
     numa_nodes=$(numactl --hardware 2>/dev/null | grep "^node [0-9]* cpus" | wc -l)
     numa_json="{\"nodes\":$numa_nodes}"
@@ -156,77 +157,7 @@ JSON
 }
 
 # ============================================================================
-# Topology display helpers (used by 03-features.sh)
+# Topology lookup helpers (used by 03-features.sh custom assignment path)
 # ============================================================================
 
 get_rank()  { echo "${LINK_RANK["$1,$2"]:-0}"; }
-get_ltype() { echo "${LINK_TYPE["$1,$2"]:-SYS}"; }
-
-# Color per link_type, matching nvidia-smi conventions
-_ltype_color() {
-  case "$1" in
-    NV*)  echo "$BGRN" ;;   # any NVLink — bright green
-    PIX)  echo "$GRN"  ;;   # PCIe same switch — green
-    PXB)  echo "$GRN"  ;;   # PCIe two switches — green
-    PHB)  echo "$AMB"  ;;   # PCIe host bridge — amber
-    NODE) echo "$AMB"  ;;   # PCIe across NUMA — amber
-    SYS)  echo "$DIM"  ;;   # across QPI/UPI — dim
-    *)    echo "$DIM"  ;;
-  esac
-}
-
-show_topology() {
-  echo ""
-  chapter "GPU TOPOLOGY"
-
-  local dname="${GPU_NAMES[0]}"
-  dname="${dname/NVIDIA /}"; dname="${dname/AMD /}"
-  echo -e "  ${WHT}Detected:${NC} ${BGRN}${GPU_COUNT}×${NC} ${dname}   ${DIM}[${VENDOR}]${NC}"
-  echo ""
-
-  # Cell width: wide enough for the longest token ("NV12" = 4, pad to 6)
-  local CW=6   # chars per cell including trailing space
-  local LW=6   # row-label width "GPU0  "
-
-  # Header row: "        GPU0  GPU1  ..."
-  printf "  %${LW}s" ""
-  for j in "${GPU_INDICES[@]}"; do
-    local hdr="GPU${j}"
-    printf "%-${CW}s" "$hdr"
-  done
-  echo ""
-
-  # Separator line
-  printf "  %${LW}s" ""
-  for j in "${GPU_INDICES[@]}"; do
-    printf "%-${CW}s" "──────" | head -c $CW
-  done
-  echo ""
-
-  # Data rows
-  for i in "${GPU_INDICES[@]}"; do
-    # Row label
-    printf "  ${WHT}%-${LW}s${NC}" "GPU${i}"
-
-    for j in "${GPU_INDICES[@]}"; do
-      if [[ "$i" == "$j" ]]; then
-        printf "${WHT}%-${CW}s${NC}" "X"
-      else
-        local lt; lt=$(get_ltype "$i" "$j")
-        local color; color=$(_ltype_color "$lt")
-        printf "${color}%-${CW}s${NC}" "$lt"
-      fi
-    done
-
-    # GPU name + VRAM on the right
-    local name="${GPU_NAMES[$i]}"
-    name="${name/NVIDIA /}"; name="${name/AMD /}"
-    printf "  ${DIM}%-28s  %sGB${NC}" "$name" "${GPU_VRAMS_GB[$i]}"
-    echo ""
-  done
-
-  echo ""
-  echo -e "  ${WHT}Legend:${NC}"
-  echo -e "    ${BGRN}NVx${NC}  NVLink (x lanes)    ${GRN}PIX/PXB${NC}  PCIe same switch    ${AMB}PHB/NODE${NC}  PCIe host bridge / cross-NUMA    ${DIM}SYS${NC}  cross-socket"
-  echo ""
-}

@@ -271,6 +271,7 @@ count_amd_gpus() {
         [[ -d "$card_dir" ]] || continue
         local vendor
         vendor=$(cat "$card_dir/vendor" 2>/dev/null) || continue
+        # (( 0++ )) returns exit 1 in bash, so || true prevents pipefail abort
         [[ "$vendor" == "0x1002" ]] && (( count++ )) || true
     done
     echo "$count"

@@ -34,6 +34,7 @@ resolve_tier_config() {
             GGUF_URL="https://huggingface.co/unsloth/Qwen3.5-9B-GGUF/resolve/main/Qwen3.5-9B-Q4_K_M.gguf"
             GGUF_SHA256="03b74727a860a56338e042c4420bb3f04b2fec5734175f4cb9fa853daf52b7e8"
             MAX_CONTEXT=32768
+            LLM_MODEL_SIZE_MB=5030    # same model as Tier 1
             GPU_BACKEND="sycl"
             N_GPU_LAYERS=99
             ;;
@@ -46,6 +47,7 @@ resolve_tier_config() {
             GGUF_URL="https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q4_K_M.gguf"
             GGUF_SHA256="00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4"
             MAX_CONTEXT=16384
+            LLM_MODEL_SIZE_MB=2560    # 2.5 GB per HF file listing
             GPU_BACKEND="sycl"
             N_GPU_LAYERS=99
             ;;
@@ -83,6 +85,7 @@ resolve_tier_config() {
             GGUF_URL="https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/main/Qwen3.5-2B-Q4_K_M.gguf"
             GGUF_SHA256=""
             MAX_CONTEXT=8192
+            LLM_MODEL_SIZE_MB=1311    # 1.28 GB per HF file listing
             ;;
         1)
             TIER_NAME="Entry Level"
