@@ -11,12 +11,14 @@
 #           LLM_MODEL, MAX_CONTEXT, GGUF_FILE, COMPOSE_FLAGS,
 #           ENABLE_VOICE, ENABLE_WORKFLOWS, ENABLE_RAG, ENABLE_OPENCLAW,
 #           OPENCLAW_CONFIG, OPENCLAW_PROVIDER_NAME_DEFAULT,
-#           OPENCLAW_PROVIDER_URL_DEFAULT,
+#           OPENCLAW_PROVIDER_URL_DEFAULT, GPU_ASSIGNMENT_JSON,
+#           COMFYUI_GPU_UUID, WHISPER_GPU_UUID, EMBEDDINGS_GPU_UUID,
+#           LLAMA_SERVER_GPU_UUIDS, LLAMA_ARG_SPLIT_MODE, LLAMA_ARG_TENSOR_SPLIT,
 #           chapter(), ai(), ai_ok(), ai_warn(), log(), warn(), error()
 # Provides: WEBUI_SECRET, N8N_PASS, LITELLM_KEY, LIVEKIT_SECRET,
 #           DASHBOARD_API_KEY, OPENCODE_SERVER_PASSWORD, OPENCLAW_TOKEN,
 #           OPENCLAW_PROVIDER_NAME, OPENCLAW_PROVIDER_URL, OPENCLAW_MODEL,
-#           OPENCLAW_CONTEXT
+#           OPENCLAW_CONTEXT, GPU_ASSIGNMENT_JSON_B64 (in .env)
 #
 # Modder notes:
 #   This is the largest phase. Modify .env generation, add new config files,
@@ -86,8 +88,6 @@ else
     else
         log "Running in-place (source == install dir), skipping file copy"
     fi
-
-
 
     # Select tier-appropriate OpenClaw config
     if [[ "$ENABLE_OPENCLAW" == "true" && -n "$OPENCLAW_CONFIG" ]]; then
@@ -287,8 +287,12 @@ MODELS_EOF
     ANTHROPIC_API_KEY=$(_env_get ANTHROPIC_API_KEY "${ANTHROPIC_API_KEY:-}")
     OPENAI_API_KEY=$(_env_get OPENAI_API_KEY "${OPENAI_API_KEY:-}")
     TOGETHER_API_KEY=$(_env_get TOGETHER_API_KEY "${TOGETHER_API_KEY:-}")
-    # Inline and escape the jsons
-    GPU_ASSIGNMENT_JSON_ONELINE=$(echo "$GPU_ASSIGNMENT_JSON" | jq -c '.' | sed 's/"/\\"/g')
+    # Base64-encode GPU assignment JSON for safe .env storage
+    if [[ -n "$GPU_ASSIGNMENT_JSON" && "$GPU_ASSIGNMENT_JSON" != "{}" ]]; then
+        GPU_ASSIGNMENT_JSON_B64=$(echo "$GPU_ASSIGNMENT_JSON" | jq -c '.' | base64 -w0)
+    else
+        GPU_ASSIGNMENT_JSON_B64=""
+    fi
 
     # Generate .env file
     cat > "$INSTALL_DIR/.env" << ENV_EOF
@@ -401,7 +405,7 @@ LANGFUSE_INIT_USER_PASSWORD=${LANGFUSE_INIT_USER_PASSWORD}
 ENABLE_IMAGE_GENERATION=${ENABLE_COMFYUI:-true}
 
 #=== Multi-GPU Settings ===
-GPU_ASSIGNMENT_JSON=${GPU_ASSIGNMENT_JSON_ONELINE:-{}}
+GPU_ASSIGNMENT_JSON_B64=${GPU_ASSIGNMENT_JSON_B64:-}
 COMFYUI_GPU_UUID=${COMFYUI_GPU_UUID:-}
 WHISPER_GPU_UUID=${WHISPER_GPU_UUID:-}
 EMBEDDINGS_GPU_UUID=${EMBEDDINGS_GPU_UUID:-}

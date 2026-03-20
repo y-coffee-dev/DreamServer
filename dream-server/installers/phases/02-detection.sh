@@ -16,7 +16,9 @@
 #           TIER, TIER_NAME, LLM_MODEL, GGUF_FILE, GGUF_URL, MAX_CONTEXT,
 #           COMPOSE_FILE, COMPOSE_FLAGS, RAM_GB, DISK_AVAIL, BACKEND_ID,
 #           LLM_HEALTHCHECK_URL, LLM_PUBLIC_API_PORT,
-#           OPENCLAW_PROVIDER_NAME_DEFAULT, OPENCLAW_PROVIDER_URL_DEFAULT
+#           OPENCLAW_PROVIDER_NAME_DEFAULT, OPENCLAW_PROVIDER_URL_DEFAULT,
+#           GPU_TOPOLOGY_JSON, GPU_HAS_NVLINK, GPU_TOTAL_VRAM,
+#           LLM_MODEL_SIZE_MB
 #
 # Modder notes:
 #   Change tier auto-detection thresholds or add new hardware classes here.
@@ -294,7 +296,9 @@ if [[ $GPU_COUNT -gt 1 && "$GPU_BACKEND" == "nvidia" ]]; then
         
         # Run topology detection and capture JSON output
         GPU_TOPOLOGY_JSON=$(detect_nvidia_topo 2>>"$LOG_FILE") || {
-            warn "Multi-GPU topology detection failed"
+            warn "Multi-GPU topology detection failed — multi-GPU configuration disabled"
+            ai_warn "Could not detect GPU topology. Multi-GPU features will be skipped."
+            ai_warn "Check $LOG_FILE for details. You can re-run the installer after fixing the issue."
             GPU_TOPOLOGY_JSON="{}"
         }
         

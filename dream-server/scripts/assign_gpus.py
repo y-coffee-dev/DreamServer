@@ -85,13 +85,13 @@ def parse_gpus(topology: dict) -> list:
 
 def parse_links(topology: dict) -> list:
     links = []
-    for l in topology.get("links", []):
+    for link in topology.get("links", []):
         links.append(Link(
-            gpu_a=l["gpu_a"],
-            gpu_b=l["gpu_b"],
-            link_type=l["link_type"],
-            link_label=l["link_label"],
-            rank=l["rank"],
+            gpu_a=link["gpu_a"],
+            gpu_b=link["gpu_b"],
+            link_type=link["link_type"],
+            link_label=link["link_label"],
+            rank=link["rank"],
         ))
     return links
 

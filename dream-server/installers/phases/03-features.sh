@@ -6,10 +6,15 @@
 # Purpose: Interactive feature selection menu
 #
 # Expects: INTERACTIVE, DRY_RUN, TIER, ENABLE_VOICE, ENABLE_WORKFLOWS,
-#           ENABLE_RAG, ENABLE_OPENCLAW, show_phase(), show_install_menu(),
-#           log(), warn(), signal()
+#           ENABLE_RAG, ENABLE_OPENCLAW, GPU_COUNT, GPU_BACKEND,
+#           GPU_TOPOLOGY_JSON, LLM_MODEL_SIZE_MB, SCRIPT_DIR, VERBOSE, DEBUG,
+#           GPU_INDICES, GPU_UUIDS (arrays from topology),
+#           show_phase(), show_install_menu(), chapter(), bootline(),
+#           success(), log(), warn(), error(), signal()
 # Provides: ENABLE_VOICE, ENABLE_WORKFLOWS, ENABLE_RAG, ENABLE_OPENCLAW,
-#           OPENCLAW_CONFIG
+#           OPENCLAW_CONFIG, GPU_ASSIGNMENT_JSON,
+#           LLAMA_SERVER_GPU_UUIDS, WHISPER_GPU_UUID, COMFYUI_GPU_UUID,
+#           EMBEDDINGS_GPU_UUID, LLAMA_ARG_SPLIT_MODE, LLAMA_ARG_TENSOR_SPLIT
 #
 # Modder notes:
 #   Add new optional features to the Custom menu here.
@@ -71,18 +76,31 @@ fi
 # Multi-GPU Configuration
 
 # write $GPU_TOPOLOGY_JSON into a tmpfile to use by the commands
-TOPOLOGY_FILE="/tmp/ds_gpu_topology.json"
+TOPOLOGY_FILE=$(mktemp /tmp/ds_gpu_topology.XXXXXX.json)
 echo "$GPU_TOPOLOGY_JSON" > "$TOPOLOGY_FILE"
 
 ASSIGN_GPUS_SCRIPT="$SCRIPT_DIR/scripts/assign_gpus.py"
 
-GPU_COUNT=$(jq '.gpu_count' "$TOPOLOGY_FILE")
+# Validate topology gpu_count matches installer's GPU_COUNT (don't overwrite the canonical value)
+_topo_gpu_count=$(jq '.gpu_count // 0' "$TOPOLOGY_FILE")
+if [[ "$_topo_gpu_count" != "$GPU_COUNT" ]]; then
+    warn "Topology gpu_count ($_topo_gpu_count) differs from detected GPU_COUNT ($GPU_COUNT) — using detected value"
+fi
 VENDOR=$(jq -r '.vendor' "$TOPOLOGY_FILE")
 
-mapfile -t GPU_INDICES  < <(jq -r '.gpus[].index'     "$TOPOLOGY_FILE")
-mapfile -t GPU_NAMES    < <(jq -r '.gpus[].name'      "$TOPOLOGY_FILE")
-mapfile -t GPU_VRAMS_GB < <(jq -r '.gpus[].memory_gb' "$TOPOLOGY_FILE")
-mapfile -t GPU_UUIDS    < <(jq -r '.gpus[].uuid'      "$TOPOLOGY_FILE")
+# Build GPU arrays keyed by actual GPU index
+# This ensures GPU_UUIDS[$idx] always maps to the correct GPU even if
+# nvidia-smi returns GPUs out of index order.
+declare -a GPU_INDICES=()
+declare -A GPU_NAMES=()
+declare -A GPU_VRAMS_GB=()
+declare -A GPU_UUIDS=()
+while IFS=$'\t' read -r _idx _name _mem _uuid; do
+    GPU_INDICES+=("$_idx")
+    GPU_NAMES["$_idx"]="$_name"
+    GPU_VRAMS_GB["$_idx"]="$_mem"
+    GPU_UUIDS["$_idx"]="$_uuid"
+done < <(jq -r '.gpus[] | [.index, .name, .memory_gb, .uuid] | @tsv' "$TOPOLOGY_FILE")
 
 declare -A LINK_RANK
 declare -A LINK_TYPE
@@ -104,7 +122,7 @@ run_automatic() {
   result=$(python3 "$ASSIGN_GPUS_SCRIPT" \
     --topology "$TOPOLOGY_FILE" --model-size "$LLM_MODEL_SIZE_MB" 2>&1) || {
     echo -e "  ${RED}Assignment failed:${NC}\n  $result"
-    exit 1
+    error "GPU assignment failed: $result"
   }
 
   local strategy mode tp pp mem_util
@@ -255,6 +273,7 @@ run_custom() {
 }
 
 _show_json() {
+  [[ "${VERBOSE:-false}" == "true" || "${DEBUG:-false}" == "true" ]] || return 0
   echo ""; bootline
   echo -e "${BGRN}GPU ASSIGNMENT JSON${NC}"
   bootline; echo ""
@@ -270,8 +289,6 @@ if ! $INTERACTIVE || $DRY_RUN; then
     log "Non-interactive mode: running automatic GPU assignment with default values."
     run_automatic
 else
-    show_topology
-
     bootline
     echo -e "${BGRN}MULTI-GPU CONFIGURATION${NC}"
     bootline

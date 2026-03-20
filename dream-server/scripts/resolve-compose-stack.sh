@@ -120,7 +120,7 @@ if not resolved:
     resolved = [primary]
 
 # Multi-GPU overlay if we have more than 1 GPU.
-if gpu_count > 1:
+if gpu_count > 1 and (script_dir / "docker-compose.multigpu.yml").exists():
     resolved.append("docker-compose.multigpu.yml")
 
 # Discover enabled extension compose fragments via manifests
