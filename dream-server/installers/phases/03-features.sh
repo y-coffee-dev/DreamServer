@@ -136,7 +136,7 @@ run_automatic() {
   success "Assignment complete"
   echo ""
   echo -e "  ${WHT}Strategy:${NC}    ${BGRN}${strategy}${NC}"
-  echo -e "  ${WHT}Llama mode:${NC}  ${BGRN}${mode}${NC}  ${DIM}(TP=${tp}  PP=${pp}  mem_util=${mem_util})${NC}"
+  echo -e "  ${WHT}Llama mode:${NC}  ${BGRN}${mode}${NC}"
   echo ""
   echo -e "  ${WHT}Service assignments:${NC}"
 
@@ -242,7 +242,7 @@ run_custom() {
 
   local result
   result=$(jq -n \
-    --argjson strategy        "\"$strategy\"" \
+    --arg     strategy        "$strategy" \
     --argjson llama_gpus      "$llama_uuids_json" \
     --arg     mode             "$mode" \
     --argjson tp               "$tp" \
@@ -311,7 +311,7 @@ else
     esac
 fi
 
-LLAMA_SERVER_GPU_UUIDS=$(echo "$GPU_ASSIGNMENT_JSON" | jq -r '.gpu_assignment.services.llama_server.gpus[]?')
+LLAMA_SERVER_GPU_UUIDS=$(echo "$GPU_ASSIGNMENT_JSON" | jq -r '.gpu_assignment.services.llama_server.gpus // [] | join(",")')
 WHISPER_GPU_UUID=$(echo "$GPU_ASSIGNMENT_JSON" | jq -r '.gpu_assignment.services.whisper.gpus[0]?')
 COMFYUI_GPU_UUID=$(echo "$GPU_ASSIGNMENT_JSON" | jq -r '.gpu_assignment.services.comfyui.gpus[0]?')
 EMBEDDINGS_GPU_UUID=$(echo "$GPU_ASSIGNMENT_JSON" | jq -r '.gpu_assignment.services.embeddings.gpus[0]?')

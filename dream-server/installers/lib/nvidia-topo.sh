@@ -4,12 +4,11 @@
 # ============================================================================
 # Part of: installers/lib/
 # Purpose: Detect NVIDIA Multi-GPU topology as well as basic GPU info
-#          and return as JSON. This script can be used standalone or
-#          sourced by the main detection.sh script.
+#          and return as JSON. Sourced by detection.sh and 03-features.sh.
 #
 # Expects: nvidia-smi, warn(), err(), LINK_RANK
 # Provides: parse_nvidia_topo_matrix(), detect_nvidia_topo(), link_rank(),
-#           link_label(), get_rank(), json_str()
+#           link_label(), get_rank()
 #
 # Modder notes:
 #   This script handles NVIDIA-specific topology detection including NVLink,
@@ -17,7 +16,6 @@
 #   by the multi-GPU strategy selection logic.
 # ============================================================================
 
-json_str() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
 link_rank() {
   case "$1" in
   NV4 | NV6 | NV8 | NV12 | NV18)  echo 100 ;;   # NVLink gen2/3
@@ -60,8 +58,8 @@ parse_nvidia_topo_matrix() {
   header_line=$(echo "$matrix" | grep -E '^\s+GPU[0-9]' | head -1)
   read -ra headers <<<"$header_line"
 
-  local pairs="["
-  local first_pair=true
+  # Collect pairs as TSV, then convert to JSON via jq
+  local pairs_tsv=""
 
   while IFS= read -r line; do
     [[ "$line" =~ ^(GPU[0-9]+|NIC[0-9]+) ]] || continue
@@ -83,14 +81,22 @@ parse_nvidia_topo_matrix() {
       rank=$(link_rank "$cell")
       local label
       label=$(link_label "$cell")
-      $first_pair || pairs+=","
-      first_pair=false
-      pairs+="{\"gpu_a\":$gpu_a,\"gpu_b\":$gpu_b,\"link_type\":\"$cell\",\"link_label\":\"$label\",\"rank\":$rank}"
+      pairs_tsv+="${gpu_a}	${gpu_b}	${cell}	${label}	${rank}"$'\n'
     done
   done <<<"$matrix"
 
-  pairs+="]"
-  echo "$pairs"
+  if [[ -z "$pairs_tsv" ]]; then
+    echo "[]"
+    return
+  fi
+
+  printf '%s' "$pairs_tsv" | jq -Rn '[inputs | split("\t") | {
+    gpu_a: (.[0] | tonumber),
+    gpu_b: (.[1] | tonumber),
+    link_type: .[2],
+    link_label: .[3],
+    rank: (.[4] | tonumber)
+  }]'
 }
 
 detect_nvidia_topo() {
@@ -102,24 +108,19 @@ detect_nvidia_topo() {
     return 1
   }
 
-  local gpus_json="["
-  local first=true
-  local gpu_count=0
-  while IFS=',' read -r idx name mem_mb pcie_gen pcie_width uuid; do
-    idx=$(echo "$idx" | xargs)
-    name=$(echo "$name" | xargs)
-    mem_mb=$(echo "$mem_mb" | xargs)
-    pcie_gen=$(echo "$pcie_gen" | xargs)
-    pcie_width=$(echo "$pcie_width" | xargs)
-    uuid=$(echo "$uuid" | xargs)
-    local mem_gb
-    mem_gb=$(awk "BEGIN{printf \"%.1f\", $mem_mb/1024}")
-    $first || gpus_json+=","
-    first=false
-    gpus_json+="{\"index\":$idx,\"name\":\"$(json_str "$name")\",\"memory_gb\":$mem_gb,\"pcie_gen\":\"$(json_str "$pcie_gen")\",\"pcie_width\":\"$(json_str "$pcie_width")\",\"uuid\":\"$(json_str "$uuid")\"}"
-    gpu_count=$((gpu_count + 1))
-  done <<<"$gpu_list"
-  gpus_json+="]"
+  # Parse CSV into JSON array via jq
+  local gpus_json
+  gpus_json=$(echo "$gpu_list" | jq -Rn '[inputs | split(",") | map(gsub("^\\s+|\\s+$"; "")) | {
+    index: (.[0] | tonumber),
+    name: .[1],
+    memory_gb: ((.[2] | tonumber) / 1024 * 10 | round / 10),
+    pcie_gen: .[3],
+    pcie_width: .[4],
+    uuid: .[5]
+  }]')
+
+  local gpu_count
+  gpu_count=$(echo "$gpus_json" | jq 'length')
 
   # MIG detection
   local mig_mode="false"
@@ -127,7 +128,7 @@ detect_nvidia_topo() {
     mig_mode="true"
   fi
 
-  # Driver + CUDA version
+  # Driver version
   local driver_ver
   driver_ver=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1 | xargs)
 
@@ -140,20 +141,27 @@ detect_nvidia_topo() {
   if command -v numactl &>/dev/null; then
     local numa_nodes
     numa_nodes=$(numactl --hardware 2>/dev/null | grep "^node [0-9]* cpus" | wc -l)
-    numa_json="{\"nodes\":$numa_nodes}"
+    numa_json=$(jq -n --argjson n "$numa_nodes" '{nodes: $n}')
   fi
 
-  cat <<JSON
-{
-  "vendor": "nvidia",
-  "gpu_count": $gpu_count,
-  "driver_version": "$(json_str "$driver_ver")",
-  "mig_enabled": $mig_mode,
-  "numa": $numa_json,
-  "gpus": $gpus_json,
-  "links": $topo_pairs
-}
-JSON
+  # Compose final JSON
+  jq -n \
+    --arg vendor "nvidia" \
+    --argjson gpu_count "$gpu_count" \
+    --arg driver "$driver_ver" \
+    --argjson mig "$mig_mode" \
+    --argjson numa "$numa_json" \
+    --argjson gpus "$gpus_json" \
+    --argjson links "$topo_pairs" \
+    '{
+      vendor: $vendor,
+      gpu_count: $gpu_count,
+      driver_version: $driver,
+      mig_enabled: $mig,
+      numa: $numa,
+      gpus: $gpus,
+      links: $links
+    }'
 }
 
 # ============================================================================

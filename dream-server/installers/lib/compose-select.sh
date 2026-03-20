@@ -109,6 +109,5 @@ resolve_compose_config() {
         log "Including docker-compose.override.yml (user overrides)"
     fi
 
-
     log "Compose selection: $COMPOSE_FLAGS"
 }
