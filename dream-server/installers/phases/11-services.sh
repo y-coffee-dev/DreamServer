@@ -311,8 +311,18 @@ MODELS_INI_EOF
     echo ""
     compose_ok=false
     # Build locally-built images individually so one failure doesn't block the rest
-    for _svc in dashboard dashboard-api comfyui ape token-spy privacy-shield; do
-        $DOCKER_COMPOSE_CMD "${COMPOSE_FLAGS_ARR[@]}" build --no-cache "$_svc" >> "$LOG_FILE" 2>&1 || true
+    _build_count=0
+    _build_services=(dashboard dashboard-api comfyui ape token-spy privacy-shield)
+    _build_total=${#_build_services[@]}
+    for _svc in "${_build_services[@]}"; do
+        _build_count=$((_build_count + 1))
+        $DOCKER_COMPOSE_CMD "${COMPOSE_FLAGS_ARR[@]}" build --no-cache "$_svc" >> "$LOG_FILE" 2>&1 &
+        _build_pid=$!
+        if ! spin_task $_build_pid "[$_build_count/$_build_total] Building $_svc"; then
+            printf "\r  ${AMB}⚠${NC} %-60s\n" "$_svc build failed (non-critical)"
+        else
+            printf "\r  ${BGRN}✓${NC} %-60s\n" "$_svc built"
+        fi
     done
     # Start everything — --no-build skips services whose images failed to build
     $DOCKER_COMPOSE_CMD "${COMPOSE_FLAGS_ARR[@]}" up -d --no-build >> "$LOG_FILE" 2>&1 &
