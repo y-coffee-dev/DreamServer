@@ -72,6 +72,27 @@ if [[ -f "$SCRIPT_DIR/installers/lib/background-tasks.sh" ]]; then
     fi
 fi
 
+# Check bootstrap model upgrade status
+if [[ "${_BOOTSTRAP_ACTIVE:-false}" == "true" ]]; then
+    bg_task_status "full-model-download" &>/dev/null
+    _upgrade_status=$?
+    case $_upgrade_status in
+        0)  # Still running
+            echo ""
+            ai_warn "Using bootstrap model ($BOOTSTRAP_LLM_MODEL). Full model ($FULL_LLM_MODEL) downloading..."
+            ai "The model will auto-swap when ready. Check: tail -f $INSTALL_DIR/logs/model-upgrade.log"
+            ;;
+        1)  # Completed
+            ai_ok "Full model ($FULL_LLM_MODEL) downloaded and swapped"
+            ;;
+        2)  # Failed
+            ai_warn "Full model download failed. Currently running bootstrap model ($BOOTSTRAP_LLM_MODEL)"
+            ai "Re-run installer to retry, or check: $INSTALL_DIR/logs/model-upgrade.log"
+            ;;
+    esac
+fi
+
+
 # Additional service info
 bootline
 echo -e "${BGRN}ALL SERVICES${NC}"

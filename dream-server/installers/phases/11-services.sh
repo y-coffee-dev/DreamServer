@@ -47,6 +47,31 @@ else
     # Ensure model directory exists
     mkdir -p "$INSTALL_DIR/data/models"
 
+    # ── Bootstrap model fast-start ──
+    # For Tier 1+ installs, download a tiny model first so the user can chat
+    # immediately. The full model downloads in the background and hot-swaps.
+    [[ -f "$SCRIPT_DIR/installers/lib/bootstrap-model.sh" ]] && . "$SCRIPT_DIR/installers/lib/bootstrap-model.sh"
+    _BOOTSTRAP_ACTIVE=false
+    if type bootstrap_needed &>/dev/null && bootstrap_needed; then
+        _BOOTSTRAP_ACTIVE=true
+        # Save full model config for the background upgrade
+        FULL_GGUF_FILE="$GGUF_FILE"
+        FULL_GGUF_URL="$GGUF_URL"
+        FULL_GGUF_SHA256="$GGUF_SHA256"
+        FULL_LLM_MODEL="$LLM_MODEL"
+        FULL_MAX_CONTEXT="$MAX_CONTEXT"
+
+        # Swap to bootstrap model for the foreground download
+        GGUF_FILE="$BOOTSTRAP_GGUF_FILE"
+        GGUF_URL="$BOOTSTRAP_GGUF_URL"
+        GGUF_SHA256=""  # No SHA256 for Tier 0 model
+        LLM_MODEL="$BOOTSTRAP_LLM_MODEL"
+        MAX_CONTEXT="$BOOTSTRAP_MAX_CONTEXT"
+        ai "Fast-start mode: downloading bootstrap model (~1.5GB) for instant chat."
+        ai "Your full model ($FULL_LLM_MODEL) will download in the background."
+    fi
+
+
     # Download GGUF model if not already present (with retry and integrity verification)
     dream_progress 76 "services" "Checking AI model"
     GGUF_DIR="$INSTALL_DIR/data/models"
@@ -306,6 +331,32 @@ MODELS_INI_EOF
         printf "\r  ${BGRN}✓${NC} %-60s\n" "All containers launched"
         echo ""
         ai_ok "Services started (llama-server)"
+
+        # ── Bootstrap: launch background full-model download + auto hot-swap ──
+        if [[ "$_BOOTSTRAP_ACTIVE" == "true" ]]; then
+            ai "Launching background download for $FULL_LLM_MODEL..."
+
+            # Source background task tracking if not already loaded
+            if ! command -v bg_task_start &>/dev/null && [[ -f "$SCRIPT_DIR/installers/lib/background-tasks.sh" ]]; then
+                . "$SCRIPT_DIR/installers/lib/background-tasks.sh"
+            fi
+
+            nohup bash "$SCRIPT_DIR/scripts/bootstrap-upgrade.sh" 
+                "$INSTALL_DIR" "$FULL_GGUF_FILE" "$FULL_GGUF_URL" 
+                "$FULL_GGUF_SHA256" "$FULL_LLM_MODEL" "$FULL_MAX_CONTEXT" 
+                > "$INSTALL_DIR/logs/model-upgrade.log" 2>&1 &
+            _upgrade_pid=$!
+
+            if command -v bg_task_start &>/dev/null; then
+                bg_task_start "full-model-download" "$_upgrade_pid" 
+                    "Full model download: $FULL_LLM_MODEL" 
+                    "$INSTALL_DIR/logs/model-upgrade.log"
+            fi
+
+            log "Background model upgrade started (PID: $_upgrade_pid)"
+            ai "Full model ($FULL_LLM_MODEL) downloading in background."
+            ai "It will auto-swap when ready. Check progress: tail -f $INSTALL_DIR/logs/model-upgrade.log"
+        fi
     else
         printf "\r  ${RED}✗${NC} %-60s\n" "Some containers failed to launch"
         echo ""
