@@ -16,6 +16,7 @@ service:
   compose_file: compose.yaml.disabled
   category: optional
   depends_on: []
+  setup_hook: setup.sh
   env_vars:
     - key: DIFY_SECRET_KEY
       required: true

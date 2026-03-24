@@ -16,9 +16,10 @@ service:
   compose_file: compose.yaml
   category: optional
   depends_on: []
+  setup_hook: setup.sh
   env_vars:
     - key: JUPYTER_TOKEN
-      required: false
+      required: true
       secret: true
       description: Access token for Jupyter
 
