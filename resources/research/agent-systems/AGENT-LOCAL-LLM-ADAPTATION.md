@@ -145,7 +145,7 @@ parallel = 4  → four concurrent (for 48GB+ GPUs)
 3. Unload current → load fallback → verify health
 4. Resume query loop
 
-**See also:** [AGENT-LLM-API-INTEGRATION.md](AGENT-LLM-API-INTEGRATION.md) §4 (rate limits), DreamServer's [HARDWARE-GUIDE.md](HARDWARE-GUIDE.md), [M6-VRAM-MULTI-SERVICE-LIMITS.md](M6-VRAM-MULTI-SERVICE-LIMITS.md)
+**See also:** [AGENT-LLM-API-INTEGRATION.md](AGENT-LLM-API-INTEGRATION.md) §4 (rate limits), DreamServer's [HARDWARE-GUIDE.md](../hardware/HARDWARE-GUIDE.md), [M6-VRAM-MULTI-SERVICE-LIMITS.md](../hardware/M6-VRAM-MULTI-SERVICE-LIMITS.md)
 
 ---
 
@@ -205,7 +205,7 @@ For small windows, compact earlier and more aggressively:
 | 8K | 60% (4.8K) | Tool results >2 turns old |
 | 4K | 50% (2K) | Tool results >1 turn old |
 
-**See also:** [AGENT-CONTEXT-COMPACTION-ADVANCED.md](AGENT-CONTEXT-COMPACTION-ADVANCED.md), DreamServer's [LOCAL-AI-BEST-PRACTICES.md](LOCAL-AI-BEST-PRACTICES.md)
+**See also:** [AGENT-CONTEXT-COMPACTION-ADVANCED.md](AGENT-CONTEXT-COMPACTION-ADVANCED.md), DreamServer's [LOCAL-AI-BEST-PRACTICES.md](../architecture/LOCAL-AI-BEST-PRACTICES.md)
 
 ---
 
@@ -297,7 +297,7 @@ detectToolCallingTier(modelName):
   return TIER_C    // prompt-based fallback
 ```
 
-**See also:** [AGENT-TOOL-ARCHITECTURE.md](AGENT-TOOL-ARCHITECTURE.md), [AGENT-STREAMING-TOOL-EXECUTION.md](AGENT-STREAMING-TOOL-EXECUTION.md), DreamServer's [TOOL-CALLING-SURVEY.md](TOOL-CALLING-SURVEY.md), [tool-calling-qwen.md](tool-calling-qwen.md), [tool-calling-llama.md](tool-calling-llama.md)
+**See also:** [AGENT-TOOL-ARCHITECTURE.md](AGENT-TOOL-ARCHITECTURE.md), [AGENT-STREAMING-TOOL-EXECUTION.md](AGENT-STREAMING-TOOL-EXECUTION.md), DreamServer's [TOOL-CALLING-SURVEY.md](../models/TOOL-CALLING-SURVEY.md), [tool-calling-qwen.md](../models/tool-calling-qwen.md), [tool-calling-llama.md](../models/tool-calling-llama.md)
 
 ---
 
@@ -355,7 +355,7 @@ reinforcementMessage():
   When done with tools, respond to the user normally."
 ```
 
-**See also:** [AGENT-SYSTEM-PROMPT-ENGINEERING.md](AGENT-SYSTEM-PROMPT-ENGINEERING.md), DreamServer's [LOCAL-AI-BEST-PRACTICES.md](LOCAL-AI-BEST-PRACTICES.md)
+**See also:** [AGENT-SYSTEM-PROMPT-ENGINEERING.md](AGENT-SYSTEM-PROMPT-ENGINEERING.md), DreamServer's [LOCAL-AI-BEST-PRACTICES.md](../architecture/LOCAL-AI-BEST-PRACTICES.md)
 
 ---
 
@@ -533,7 +533,7 @@ selectBestQuant(model, availableVRAM):
   return null  // no variant fits
 ```
 
-**See also:** [AGENT-QUERY-LOOP-AND-STATE-MACHINE.md](AGENT-QUERY-LOOP-AND-STATE-MACHINE.md), [AGENT-FEATURE-DELIVERY.md](AGENT-FEATURE-DELIVERY.md), DreamServer's [HARDWARE-GUIDE.md](HARDWARE-GUIDE.md)
+**See also:** [AGENT-QUERY-LOOP-AND-STATE-MACHINE.md](AGENT-QUERY-LOOP-AND-STATE-MACHINE.md), [AGENT-FEATURE-DELIVERY.md](AGENT-FEATURE-DELIVERY.md), DreamServer's [HARDWARE-GUIDE.md](../hardware/HARDWARE-GUIDE.md)
 
 ---
 
@@ -740,9 +740,9 @@ Each model family uses a different tokenizer. The character heuristic (~3.7 char
 - [AGENT-ARCHITECTURE-OVERVIEW.md](AGENT-ARCHITECTURE-OVERVIEW.md) — The master blueprint this doc localizes
 
 ### DreamServer Research (Local AI Knowledge Base)
-- [LOCAL-AI-BEST-PRACTICES.md](LOCAL-AI-BEST-PRACTICES.md) — Production lessons from local GPU deployments
-- [TOOL-CALLING-SURVEY.md](TOOL-CALLING-SURVEY.md) — Tool calling across model families
-- [tool-calling-qwen.md](tool-calling-qwen.md), [tool-calling-llama.md](tool-calling-llama.md), [tool-calling-mistral.md](tool-calling-mistral.md) — Per-model guides
-- [HARDWARE-GUIDE.md](HARDWARE-GUIDE.md) — GPU selection and VRAM planning
-- [M6-VRAM-MULTI-SERVICE-LIMITS.md](M6-VRAM-MULTI-SERVICE-LIMITS.md) — VRAM budgets for multi-service stacks
-- [SINGLE-GPU-MULTI-SERVICE.md](SINGLE-GPU-MULTI-SERVICE.md) — Running multiple AI services on one GPU
+- [LOCAL-AI-BEST-PRACTICES.md](../architecture/LOCAL-AI-BEST-PRACTICES.md) — Production lessons from local GPU deployments
+- [TOOL-CALLING-SURVEY.md](../models/TOOL-CALLING-SURVEY.md) — Tool calling across model families
+- [tool-calling-qwen.md](../models/tool-calling-qwen.md), [tool-calling-llama.md](../models/tool-calling-llama.md), [tool-calling-mistral.md](../models/tool-calling-mistral.md) — Per-model guides
+- [HARDWARE-GUIDE.md](../hardware/HARDWARE-GUIDE.md) — GPU selection and VRAM planning
+- [M6-VRAM-MULTI-SERVICE-LIMITS.md](../hardware/M6-VRAM-MULTI-SERVICE-LIMITS.md) — VRAM budgets for multi-service stacks
+- [SINGLE-GPU-MULTI-SERVICE.md](../hardware/SINGLE-GPU-MULTI-SERVICE.md) — Running multiple AI services on one GPU
