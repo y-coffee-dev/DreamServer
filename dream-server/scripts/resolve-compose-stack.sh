@@ -168,6 +168,9 @@ if ext_dir.exists():
                     resolved.append(str(compose_path.relative_to(script_dir)))
                 elif (service_dir / f"{compose_rel}.disabled").exists():
                     continue  # Service disabled — skip all overlays
+                else:
+                    print(f"WARNING: {service_dir.name}: compose_file '{compose_rel}' not found, skipping overlays", file=sys.stderr)
+                    continue  # Base compose missing — skip GPU/mode overlays
             # GPU-specific overlay (filesystem discovery — not in manifest)
             gpu_overlay = service_dir / f"compose.{gpu_backend}.yaml"
             if gpu_overlay.exists():
