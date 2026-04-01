@@ -61,13 +61,14 @@ export default function Extensions() {
   const [confirm, setConfirm] = useState(null)
   const [toast, setToast] = useState(null)
   const [consoleExt, setConsoleExt] = useState(null)
+  const [refreshing, setRefreshing] = useState(false)
 
   useEffect(() => {
     fetchCatalog()
   }, [])
 
   useEffect(() => {
-    if (toast) {
+    if (toast && toast.type !== 'info') {
       const t = setTimeout(() => setToast(null), 5000)
       return () => clearTimeout(t)
     }
@@ -75,7 +76,8 @@ export default function Extensions() {
 
   const fetchCatalog = async () => {
     try {
-      setLoading(true)
+      if (!catalog) setLoading(true)
+      setRefreshing(true)
       setError(null)
       const res = await fetchJson(`/api/extensions/catalog`)
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -85,6 +87,7 @@ export default function Extensions() {
       console.error('Extensions fetch error:', err)
     } finally {
       setLoading(false)
+      setRefreshing(false)
     }
   }
 
@@ -128,7 +131,7 @@ export default function Extensions() {
     setConfirm({ action, ext, message: messages[action] })
   }
 
-  if (loading) {
+  if (loading && !catalog) {
     return (
       <div className="p-8 flex items-center justify-center h-64">
         <Loader2 className="animate-spin text-indigo-500" size={32} />
@@ -178,9 +181,10 @@ export default function Extensions() {
           )}
           <button
             onClick={fetchCatalog}
-            className="text-sm text-indigo-300 hover:text-indigo-200 flex items-center gap-1.5 transition-colors"
+            disabled={refreshing}
+            className="text-sm text-indigo-300 hover:text-indigo-200 flex items-center gap-1.5 transition-colors disabled:opacity-50"
           >
-            <RefreshCw size={14} />
+            <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} />
             Refresh
           </button>
         </div>
