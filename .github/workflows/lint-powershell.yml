@@ -9,7 +9,11 @@ on:
 
 jobs:
   powershell-lint:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     defaults:
       run:
         working-directory: dream-server
@@ -26,7 +30,16 @@ jobs:
       - name: Run PowerShell Script Analyzer
         shell: pwsh
         run: |
-          $scripts = Get-ChildItem -Path installers -Filter *.ps1 -Recurse
+          $scripts = @()
+          $scripts += Get-ChildItem -Path installers -Filter *.ps1 -Recurse
+
+          # Also lint repo-root Windows entrypoint (outside dream-server/).
+          $rootInstaller = Join-Path ".." "install.ps1"
+          if (Test-Path $rootInstaller) {
+            $scripts += Get-Item $rootInstaller
+          }
+
+          $scripts = $scripts | Sort-Object -Property FullName -Unique
           if (-not $scripts) {
             Write-Host "No PowerShell scripts found."
             exit 0
