@@ -100,7 +100,7 @@ export default function Extensions() {
         : `/api/extensions/${serviceId}/${action}`
       const res = await fetch(url, {
         method: action === 'uninstall' ? 'DELETE' : 'POST',
-        signal: AbortSignal.timeout(15000),
+        signal: AbortSignal.timeout(120000),
       })
       if (!res.ok) {
         const err = await res.json().catch(() => ({}))
