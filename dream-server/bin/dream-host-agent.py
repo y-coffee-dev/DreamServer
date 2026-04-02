@@ -335,7 +335,7 @@ def main():
     GPU_BACKEND = env.get("GPU_BACKEND", "nvidia")
     TIER = env.get("TIER", "1")
 
-    data_dir = Path(env.get("DREAM_DATA_DIR", str(Path.home() / ".dream-server")))
+    data_dir = Path(env.get("DREAM_DATA_DIR", str(INSTALL_DIR / "data")))
     USER_EXTENSIONS_DIR = Path(env.get(
         "DREAM_USER_EXTENSIONS_DIR",
         str(data_dir / "user-extensions"),
