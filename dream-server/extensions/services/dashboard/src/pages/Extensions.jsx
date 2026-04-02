@@ -611,9 +611,71 @@ function ConsoleModal({ ext, onClose }) {
   const [logs, setLogs] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const [disconnected, setDisconnected] = useState(false)
+  const [atBottom, setAtBottom] = useState(true)
   const logRef = useRef(null)
+  const isNearBottom = useRef(true)
 
-  const fetchLogs = async () => {
+  useEffect(() => {
+    let active = true
+    let fails = 0
+
+    const poll = async () => {
+      if (!active) return
+      try {
+        const res = await fetch(`${API_BASE}/api/extensions/${ext.id}/logs`, {
+          method: 'POST',
+          signal: AbortSignal.timeout(8000),
+        })
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}))
+          throw new Error(err.detail || 'Failed to fetch logs')
+        }
+        const data = await res.json()
+        setLogs(data.logs || 'No logs available.')
+        setError(null)
+        setDisconnected(false)
+        fails = 0
+      } catch (err) {
+        fails++
+        setError(err.message)
+        if (fails >= 3) setDisconnected(true)
+      } finally {
+        setLoading(false)
+      }
+      if (active) {
+        const delay = fails > 0 ? Math.min(2000 * Math.pow(2, fails - 1), 30000) : 2000
+        setTimeout(poll, delay)
+      }
+    }
+    poll()
+    return () => { active = false }
+  }, [ext.id])
+
+  useEffect(() => {
+    if (logRef.current && isNearBottom.current) {
+      logRef.current.scrollTop = logRef.current.scrollHeight
+    }
+  }, [logs])
+
+  const handleScroll = () => {
+    if (logRef.current) {
+      const { scrollTop, scrollHeight, clientHeight } = logRef.current
+      const near = scrollHeight - scrollTop - clientHeight < 50
+      isNearBottom.current = near
+      setAtBottom(near)
+    }
+  }
+
+  const scrollToBottom = () => {
+    if (logRef.current) {
+      logRef.current.scrollTop = logRef.current.scrollHeight
+      isNearBottom.current = true
+      setAtBottom(true)
+    }
+  }
+
+  const fetchLogsOnce = async () => {
     try {
       const res = await fetch(`/api/extensions/${ext.id}/logs`, {
         method: 'POST',
@@ -626,24 +688,11 @@ function ConsoleModal({ ext, onClose }) {
       const data = await res.json()
       setLogs(data.logs || 'No logs available.')
       setError(null)
+      setDisconnected(false)
     } catch (err) {
       setError(err.message)
-    } finally {
-      setLoading(false)
     }
   }
-
-  useEffect(() => {
-    fetchLogs()
-    const interval = setInterval(fetchLogs, 2000)
-    return () => clearInterval(interval)
-  }, [ext.id])
-
-  useEffect(() => {
-    if (logRef.current) {
-      logRef.current.scrollTop = logRef.current.scrollHeight
-    }
-  }, [logs])
 
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50" onClick={onClose}>
@@ -653,32 +702,57 @@ function ConsoleModal({ ext, onClose }) {
       >
         <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800">
           <div className="flex items-center gap-2">
-            <Terminal size={16} className="text-green-400" />
+            <Terminal size={16} className={disconnected ? 'text-red-400' : 'text-green-400'} />
             <span className="text-sm font-medium text-white">{ext.name}</span>
             <span className="text-xs text-zinc-600">logs</span>
-            <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" title="Live" />
+            {disconnected ? (
+              <span className="w-1.5 h-1.5 rounded-full bg-red-500" title="Disconnected" />
+            ) : (
+              <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" title="Live" />
+            )}
           </div>
           <button onClick={onClose} className="text-zinc-500 hover:text-zinc-300 transition-colors p-1">
             <X size={16} />
           </button>
         </div>
-        <div
-          ref={el => { logRef.current = el }}
-          className="flex-1 overflow-y-auto p-4 font-mono text-xs leading-relaxed text-zinc-300 whitespace-pre-wrap break-all"
-        >
-          {loading && !logs ? (
-            <div className="flex items-center gap-2 text-zinc-500">
-              <Loader2 size={14} className="animate-spin" /> Loading logs...
-            </div>
-          ) : error && !logs ? (
-            <div className="text-red-400">{error}</div>
-          ) : (
-            logs
+        <div className="relative flex-1">
+          <div
+            ref={el => { logRef.current = el }}
+            onScroll={handleScroll}
+            className="absolute inset-0 overflow-y-auto p-4 font-mono text-xs leading-relaxed text-zinc-300 whitespace-pre-wrap break-all"
+          >
+            {loading && !logs ? (
+              <div className="flex items-center gap-2 text-zinc-500">
+                <Loader2 size={14} className="animate-spin" /> Loading logs...
+              </div>
+            ) : (
+              <>
+                {logs}
+                {error && logs && (
+                  <div className="mt-2 text-red-400 border-t border-red-500/20 pt-2">
+                    {disconnected ? 'Connection lost' : 'Fetch error'}: {error}
+                  </div>
+                )}
+              </>
+            )}
+            {error && !logs && (
+              <div className="text-red-400">{error}</div>
+            )}
+          </div>
+          {!atBottom && (
+            <button
+              onClick={scrollToBottom}
+              className="absolute bottom-2 right-4 bg-zinc-800 border border-zinc-700 text-zinc-400 hover:text-white rounded-full px-3 py-1 text-xs shadow-lg transition-colors"
+            >
+              ↓ Jump to bottom
+            </button>
           )}
         </div>
         <div className="border-t border-zinc-800 px-4 py-2 flex items-center justify-between">
-          <span className="text-[10px] text-zinc-600">Auto-refreshing every 2s</span>
-          <button onClick={fetchLogs} className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors">
+          <span className={`text-[10px] ${disconnected ? 'text-red-400' : 'text-zinc-600'}`}>
+            {disconnected ? 'Reconnecting...' : 'Auto-refreshing every 2s'}
+          </span>
+          <button onClick={fetchLogsOnce} className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors" title="Refresh now">
             <RefreshCw size={12} />
           </button>
         </div>
