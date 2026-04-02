@@ -3,7 +3,7 @@
 # Dream Server Installer — Phase 11: Start Services
 # ============================================================================
 # Part of: installers/phases/
-# Purpose: Download GGUF model, FLUX models, generate models.ini, launch
+# Purpose: Download GGUF model, SDXL Lightning model, generate models.ini, launch
 #          Docker Compose stack
 #
 # Expects: DRY_RUN, INSTALL_DIR, LOG_FILE, GPU_BACKEND,
@@ -28,6 +28,10 @@ else
     read -ra COMPOSE_FLAGS_ARR <<< "$COMPOSE_FLAGS"
     mkdir -p "$INSTALL_DIR/logs"
 
+    # Persist compose flags so dream-cli can reuse them without re-resolving
+    echo "$COMPOSE_FLAGS" > "$INSTALL_DIR/.compose-flags" || warn "Could not cache compose flags (non-fatal)"
+    log "Saved compose flags to $INSTALL_DIR/.compose-flags"
+
     # Cloud mode: skip model downloads, auto-enable litellm
     if [[ "${DREAM_MODE:-local}" == "cloud" ]]; then
         ai "Cloud mode — skipping model download"
@@ -42,6 +46,31 @@ else
 
     # Ensure model directory exists
     mkdir -p "$INSTALL_DIR/data/models"
+
+    # ── Bootstrap model fast-start ──
+    # For Tier 1+ installs, download a tiny model first so the user can chat
+    # immediately. The full model downloads in the background and hot-swaps.
+    [[ -f "$SCRIPT_DIR/installers/lib/bootstrap-model.sh" ]] && . "$SCRIPT_DIR/installers/lib/bootstrap-model.sh"
+    _BOOTSTRAP_ACTIVE=false
+    if type bootstrap_needed &>/dev/null && bootstrap_needed; then
+        _BOOTSTRAP_ACTIVE=true
+        # Save full model config for the background upgrade
+        FULL_GGUF_FILE="$GGUF_FILE"
+        FULL_GGUF_URL="$GGUF_URL"
+        FULL_GGUF_SHA256="$GGUF_SHA256"
+        FULL_LLM_MODEL="$LLM_MODEL"
+        FULL_MAX_CONTEXT="$MAX_CONTEXT"
+
+        # Swap to bootstrap model for the foreground download
+        GGUF_FILE="$BOOTSTRAP_GGUF_FILE"
+        GGUF_URL="$BOOTSTRAP_GGUF_URL"
+        GGUF_SHA256=""  # No SHA256 for Tier 0 model
+        LLM_MODEL="$BOOTSTRAP_LLM_MODEL"
+        MAX_CONTEXT="$BOOTSTRAP_MAX_CONTEXT"
+        ai "Fast-start mode: downloading bootstrap model (~1.5GB) for instant chat."
+        ai "Your full model ($FULL_LLM_MODEL) will download in the background."
+    fi
+
 
     # Download GGUF model if not already present (with retry and integrity verification)
     dream_progress 76 "services" "Checking AI model"
@@ -85,7 +114,7 @@ else
             _dl_success=false
             for _attempt in 1 2 3; do
                 [[ $_attempt -gt 1 ]] && ai "Retry attempt $_attempt of 3..."
-                wget -c -q --timeout=300 -O "$GGUF_DIR/$GGUF_FILE.part" "$GGUF_URL" \
+                curl -fSL -C - --connect-timeout 30 --max-time 3600 -o "$GGUF_DIR/$GGUF_FILE.part" "$GGUF_URL" \
                     >> "$INSTALL_DIR/logs/model-download.log" 2>&1 &
                 dl_pid=$!
 
@@ -101,7 +130,7 @@ else
 
             if [[ "$_dl_success" != "true" ]]; then
                 printf "\r  ${RED}✗${NC} %-60s\n" "Download failed after 3 attempts: $GGUF_FILE"
-                ai "Manual retry: wget -c -O '$GGUF_DIR/$GGUF_FILE.part' '$GGUF_URL' && mv '$GGUF_DIR/$GGUF_FILE.part' '$GGUF_DIR/$GGUF_FILE'"
+                ai "Manual retry: curl -fSL -C - -o '$GGUF_DIR/$GGUF_FILE.part' '$GGUF_URL' && mv '$GGUF_DIR/$GGUF_FILE.part' '$GGUF_DIR/$GGUF_FILE'"
             else
                 # Verify freshly downloaded file
                 if [[ -n "$GGUF_SHA256" ]]; then
@@ -137,33 +166,30 @@ else
         fi
     fi
 
-    # ── FLUX.1-schnell model download (ComfyUI image generation) ──
+    # ── SDXL Lightning model download (ComfyUI image generation) ──
     dream_progress 79 "services" "Checking image generation models"
-    if [[ "${DREAM_MODE:-local}" == "cloud" ]]; then
-        ai "Cloud mode — skipping FLUX model download"
+    if [[ "$ENABLE_COMFYUI" != "true" ]]; then
+        ai "Image generation disabled — skipping model download"
+    elif [[ "${DREAM_MODE:-local}" == "cloud" ]]; then
+        ai "Cloud mode — skipping image model download"
     elif [[ "$GPU_BACKEND" == "amd" ]]; then
         COMFYUI_BASE="$INSTALL_DIR/data/comfyui/ComfyUI/models"
     elif [[ "$GPU_BACKEND" == "nvidia" ]]; then
         COMFYUI_BASE="$INSTALL_DIR/data/comfyui/models"
     fi
-    if [[ "$GPU_BACKEND" == "amd" || "$GPU_BACKEND" == "nvidia" ]]; then
-        FLUX_DIFFUSION_DIR="$COMFYUI_BASE/diffusion_models"
-        FLUX_ENCODER_DIR="$COMFYUI_BASE/text_encoders"
-        FLUX_VAE_DIR="$COMFYUI_BASE/vae"
-        mkdir -p "$FLUX_DIFFUSION_DIR" "$FLUX_ENCODER_DIR" "$FLUX_VAE_DIR"
+    if [[ "$ENABLE_COMFYUI" == "true" && "${DREAM_MODE:-local}" != "cloud" && ( "$GPU_BACKEND" == "amd" || "$GPU_BACKEND" == "nvidia" ) ]]; then
+        SDXL_CHECKPOINT_DIR="$COMFYUI_BASE/checkpoints"
+        mkdir -p "$SDXL_CHECKPOINT_DIR"
         # NVIDIA ComfyUI also needs output/input/workflows bind-mount dirs
         if [[ "$GPU_BACKEND" == "nvidia" ]]; then
             mkdir -p "$INSTALL_DIR/data/comfyui"/{output,input,workflows}
         fi
 
-        FLUX_NEEDED=false
-        [[ ! -f "$FLUX_DIFFUSION_DIR/flux1-schnell.safetensors" ]] && FLUX_NEEDED=true
-        [[ ! -f "$FLUX_ENCODER_DIR/clip_l.safetensors" ]] && FLUX_NEEDED=true
-        [[ ! -f "$FLUX_ENCODER_DIR/t5xxl_fp16.safetensors" ]] && FLUX_NEEDED=true
-        [[ ! -f "$FLUX_VAE_DIR/ae.safetensors" ]] && FLUX_NEEDED=true
+        SDXL_MODEL="sdxl_lightning_4step.safetensors"
+        SDXL_URL="https://huggingface.co/ByteDance/SDXL-Lightning/resolve/main/sdxl_lightning_4step.safetensors"
 
-        if [[ "$FLUX_NEEDED" == "true" ]]; then
-            ai "Downloading FLUX.1-schnell models (~34GB) for image generation..."
+        if [[ ! -f "$SDXL_CHECKPOINT_DIR/$SDXL_MODEL" ]]; then
+            ai "Downloading SDXL Lightning 4-step (~6.5GB) for image generation..."
 
             # Source background task tracking
             if [[ -f "$SCRIPT_DIR/installers/lib/background-tasks.sh" ]]; then
@@ -171,66 +197,33 @@ else
             fi
 
             nohup env \
-                FLUX_DIFFUSION_DIR="$FLUX_DIFFUSION_DIR" \
-                FLUX_ENCODER_DIR="$FLUX_ENCODER_DIR" \
-                FLUX_VAE_DIR="$FLUX_VAE_DIR" \
+                SDXL_CHECKPOINT_DIR="$SDXL_CHECKPOINT_DIR" \
+                SDXL_MODEL="$SDXL_MODEL" \
+                SDXL_URL="$SDXL_URL" \
                 bash -c '
-                    echo "[FLUX] Starting FLUX.1-schnell model downloads..."
-
-                    # Diffusion model (~24GB)
-                    if [[ ! -f "$FLUX_DIFFUSION_DIR/flux1-schnell.safetensors" ]]; then
-                        echo "[FLUX] Downloading flux1-schnell.safetensors (~24GB)..."
-                        wget -c -q --show-progress --timeout=600 -O "$FLUX_DIFFUSION_DIR/flux1-schnell.safetensors.part" \
-                            "https://huggingface.co/Comfy-Org/flux1-schnell/resolve/main/flux1-schnell.safetensors" 2>&1 && \
-                            mv "$FLUX_DIFFUSION_DIR/flux1-schnell.safetensors.part" "$FLUX_DIFFUSION_DIR/flux1-schnell.safetensors" && \
-                            echo "[FLUX] flux1-schnell.safetensors complete" || \
-                            echo "[FLUX] ERROR: Failed to download flux1-schnell.safetensors"
+                    echo "[SDXL] Starting SDXL Lightning model download..."
+                    if [[ ! -f "$SDXL_CHECKPOINT_DIR/$SDXL_MODEL" ]]; then
+                        echo "[SDXL] Downloading $SDXL_MODEL (~6.5GB)..."
+                        curl -fSL -C - --connect-timeout 30 --max-time 3600 -o "$SDXL_CHECKPOINT_DIR/$SDXL_MODEL.part" \
+                            "$SDXL_URL" 2>&1 && \
+                            mv "$SDXL_CHECKPOINT_DIR/$SDXL_MODEL.part" "$SDXL_CHECKPOINT_DIR/$SDXL_MODEL" && \
+                            echo "[SDXL] $SDXL_MODEL complete" || \
+                            echo "[SDXL] ERROR: Failed to download $SDXL_MODEL"
                     fi
+                    echo "[SDXL] SDXL Lightning model download finished."
+                ' > "$INSTALL_DIR/logs/sdxl-download.log" 2>&1 &
 
-                    # CLIP-L text encoder (~246MB)
-                    if [[ ! -f "$FLUX_ENCODER_DIR/clip_l.safetensors" ]]; then
-                        echo "[FLUX] Downloading clip_l.safetensors (~246MB)..."
-                        wget -c -q --show-progress --timeout=600 -O "$FLUX_ENCODER_DIR/clip_l.safetensors.part" \
-                            "https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/clip_l.safetensors" 2>&1 && \
-                            mv "$FLUX_ENCODER_DIR/clip_l.safetensors.part" "$FLUX_ENCODER_DIR/clip_l.safetensors" && \
-                            echo "[FLUX] clip_l.safetensors complete" || \
-                            echo "[FLUX] ERROR: Failed to download clip_l.safetensors"
-                    fi
-
-                    # T5-XXL text encoder (~10GB)
-                    if [[ ! -f "$FLUX_ENCODER_DIR/t5xxl_fp16.safetensors" ]]; then
-                        echo "[FLUX] Downloading t5xxl_fp16.safetensors (~10GB)..."
-                        wget -c -q --show-progress --timeout=600 -O "$FLUX_ENCODER_DIR/t5xxl_fp16.safetensors.part" \
-                            "https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/t5xxl_fp16.safetensors" 2>&1 && \
-                            mv "$FLUX_ENCODER_DIR/t5xxl_fp16.safetensors.part" "$FLUX_ENCODER_DIR/t5xxl_fp16.safetensors" && \
-                            echo "[FLUX] t5xxl_fp16.safetensors complete" || \
-                            echo "[FLUX] ERROR: Failed to download t5xxl_fp16.safetensors"
-                    fi
-
-                    # VAE (~335MB)
-                    if [[ ! -f "$FLUX_VAE_DIR/ae.safetensors" ]]; then
-                        echo "[FLUX] Downloading ae.safetensors (~335MB)..."
-                        wget -c -q --show-progress --timeout=600 -O "$FLUX_VAE_DIR/ae.safetensors.part" \
-                            "https://huggingface.co/Comfy-Org/Lumina_Image_2.0_Repackaged/resolve/main/split_files/vae/ae.safetensors" 2>&1 && \
-                            mv "$FLUX_VAE_DIR/ae.safetensors.part" "$FLUX_VAE_DIR/ae.safetensors" && \
-                            echo "[FLUX] ae.safetensors complete" || \
-                            echo "[FLUX] ERROR: Failed to download ae.safetensors"
-                    fi
-
-                    echo "[FLUX] All FLUX.1-schnell model downloads finished."
-                ' > "$INSTALL_DIR/logs/flux-download.log" 2>&1 &
-
-            flux_pid=$!
+            sdxl_pid=$!
 
             # Register background task
             if command -v bg_task_start &>/dev/null; then
-                bg_task_start "flux-download" "$flux_pid" "FLUX.1-schnell model downloads" "$INSTALL_DIR/logs/flux-download.log"
+                bg_task_start "sdxl-download" "$sdxl_pid" "SDXL Lightning model download" "$INSTALL_DIR/logs/sdxl-download.log"
             fi
 
-            log "Background FLUX download started (PID: $flux_pid). Check: tail -f $INSTALL_DIR/logs/flux-download.log"
-            ai "FLUX.1-schnell models downloading in background (~34GB). ComfyUI will be ready once complete."
+            log "Background SDXL download started (PID: $sdxl_pid). Check: tail -f $INSTALL_DIR/logs/sdxl-download.log"
+            ai "SDXL Lightning downloading in background (~6.5GB). ComfyUI will be ready once complete."
         else
-            ai_ok "FLUX.1-schnell models already present"
+            ai_ok "SDXL Lightning model already present"
         fi
     fi
 
@@ -244,6 +237,18 @@ load-on-startup = true
 n-ctx = ${MAX_CONTEXT}
 MODELS_INI_EOF
         ai_ok "Generated models.ini for llama-server"
+
+        # If bootstrap is active, patch .env so docker compose starts llama-server
+        # with the bootstrap model (phase 06 wrote .env with the full model values)
+        if [[ "$_BOOTSTRAP_ACTIVE" == "true" ]]; then
+            _env_file="$INSTALL_DIR/.env"
+            if [[ -f "$_env_file" ]]; then
+                awk -v v="$GGUF_FILE" '{ if (index($0, "GGUF_FILE=") == 1) print "GGUF_FILE=" v; else print }'                     "$_env_file" > "${_env_file}.tmp" && mv "${_env_file}.tmp" "$_env_file"
+                awk -v v="$LLM_MODEL" '{ if (index($0, "LLM_MODEL=") == 1) print "LLM_MODEL=" v; else print }'                     "$_env_file" > "${_env_file}.tmp" && mv "${_env_file}.tmp" "$_env_file"
+                awk -v v="$MAX_CONTEXT" '{ if (index($0, "MAX_CONTEXT=") == 1) print "MAX_CONTEXT=" v; else print }'                     "$_env_file" > "${_env_file}.tmp" && mv "${_env_file}.tmp" "$_env_file"
+                ai_ok "Patched .env for bootstrap model ($GGUF_FILE)"
+            fi
+        fi
     fi
 
     # Validate service dependencies before launching
@@ -270,8 +275,20 @@ MODELS_INI_EOF
     echo ""
     compose_ok=false
     # Build locally-built images individually so one failure doesn't block the rest
-    for _svc in dashboard dashboard-api comfyui ape token-spy privacy-shield; do
-        $DOCKER_COMPOSE_CMD "${COMPOSE_FLAGS_ARR[@]}" build --no-cache "$_svc" >> "$LOG_FILE" 2>&1 || true
+    _build_count=0
+    _build_services=(dashboard dashboard-api ape token-spy privacy-shield)
+    [[ "$ENABLE_COMFYUI" == "true" ]] && _build_services+=(comfyui)
+    [[ "$GPU_BACKEND" == "amd" ]] && _build_services+=(llama-server)
+    _build_total=${#_build_services[@]}
+    for _svc in "${_build_services[@]}"; do
+        _build_count=$((_build_count + 1))
+        $DOCKER_COMPOSE_CMD "${COMPOSE_FLAGS_ARR[@]}" build --no-cache "$_svc" >> "$LOG_FILE" 2>&1 &
+        _build_pid=$!
+        if ! spin_task $_build_pid "[$_build_count/$_build_total] Building $_svc"; then
+            printf "\r  ${AMB}⚠${NC} %-60s\n" "$_svc build failed (non-critical)"
+        else
+            printf "\r  ${BGRN}✓${NC} %-60s\n" "$_svc built"
+        fi
     done
     # Start everything — --no-build skips services whose images failed to build
     $DOCKER_COMPOSE_CMD "${COMPOSE_FLAGS_ARR[@]}" up -d --no-build >> "$LOG_FILE" 2>&1 &
@@ -302,6 +319,32 @@ MODELS_INI_EOF
         printf "\r  ${BGRN}✓${NC} %-60s\n" "All containers launched"
         echo ""
         ai_ok "Services started (llama-server)"
+
+        # ── Bootstrap: launch background full-model download + auto hot-swap ──
+        if [[ "$_BOOTSTRAP_ACTIVE" == "true" ]]; then
+            ai "Launching background download for $FULL_LLM_MODEL..."
+
+            # Source background task tracking if not already loaded
+            if ! command -v bg_task_start &>/dev/null && [[ -f "$SCRIPT_DIR/installers/lib/background-tasks.sh" ]]; then
+                . "$SCRIPT_DIR/installers/lib/background-tasks.sh"
+            fi
+
+            nohup bash "$SCRIPT_DIR/scripts/bootstrap-upgrade.sh" \
+                "$INSTALL_DIR" "$FULL_GGUF_FILE" "$FULL_GGUF_URL" \
+                "$FULL_GGUF_SHA256" "$FULL_LLM_MODEL" "$FULL_MAX_CONTEXT" \
+                > "$INSTALL_DIR/logs/model-upgrade.log" 2>&1 &
+            _upgrade_pid=$!
+
+            if command -v bg_task_start &>/dev/null; then
+                bg_task_start "full-model-download" "$_upgrade_pid" \
+                    "Full model download: $FULL_LLM_MODEL" \
+                    "$INSTALL_DIR/logs/model-upgrade.log"
+            fi
+
+            log "Background model upgrade started (PID: $_upgrade_pid)"
+            ai "Full model ($FULL_LLM_MODEL) downloading in background."
+            ai "It will auto-swap when ready. Check progress: tail -f $INSTALL_DIR/logs/model-upgrade.log"
+        fi
     else
         printf "\r  ${RED}✗${NC} %-60s\n" "Some containers failed to launch"
         echo ""

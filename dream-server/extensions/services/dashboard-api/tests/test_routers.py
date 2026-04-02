@@ -472,3 +472,185 @@ def test_agents_throughput_authenticated(test_client):
     assert data["average"] == (42.0 + 55.0 + 38.0) / 3  # Average of all samples
     assert len(data["history"]) == 3
 
+
+# ---------------------------------------------------------------------------
+# Setup router — get_active_persona_prompt
+# ---------------------------------------------------------------------------
+
+
+def test_get_active_persona_prompt_with_persona(setup_config_dir):
+    """get_active_persona_prompt reads system_prompt from persona.json."""
+    import json
+    from routers.setup import get_active_persona_prompt
+    persona_file = setup_config_dir / "persona.json"
+    persona_file.write_text(json.dumps({"system_prompt": "custom prompt"}))
+    assert get_active_persona_prompt() == "custom prompt"
+
+
+def test_get_active_persona_prompt_defaults_when_no_file(setup_config_dir):
+    """get_active_persona_prompt returns general prompt when no persona.json."""
+    from routers.setup import get_active_persona_prompt
+    from config import PERSONAS
+    assert get_active_persona_prompt() == PERSONAS["general"]["system_prompt"]
+
+
+def test_get_active_persona_prompt_corrupt_file(setup_config_dir):
+    """get_active_persona_prompt returns default on corrupt JSON."""
+    from routers.setup import get_active_persona_prompt
+    from config import PERSONAS
+    persona_file = setup_config_dir / "persona.json"
+    persona_file.write_text("not valid json{{{")
+    assert get_active_persona_prompt() == PERSONAS["general"]["system_prompt"]
+
+
+# ---------------------------------------------------------------------------
+# Setup router — setup_status with progress + persona
+# ---------------------------------------------------------------------------
+
+
+def test_setup_status_with_progress_file(test_client, setup_config_dir):
+    """GET /api/setup/status reads step from setup-progress.json."""
+    import json
+    (setup_config_dir / "setup-progress.json").write_text(json.dumps({"step": 3}))
+    resp = test_client.get("/api/setup/status", headers=test_client.auth_headers)
+    assert resp.status_code == 200
+    assert resp.json()["step"] == 3
+
+
+def test_setup_status_with_persona_file(test_client, setup_config_dir):
+    """GET /api/setup/status reads persona from persona.json."""
+    import json
+    (setup_config_dir / "persona.json").write_text(json.dumps({"persona": "coding"}))
+    resp = test_client.get("/api/setup/status", headers=test_client.auth_headers)
+    assert resp.status_code == 200
+    assert resp.json()["persona"] == "coding"
+
+
+def test_setup_status_corrupt_progress_file(test_client, setup_config_dir):
+    """GET /api/setup/status with corrupt progress file → step defaults to 0."""
+    (setup_config_dir / "setup-progress.json").write_text("not json{{{")
+    resp = test_client.get("/api/setup/status", headers=test_client.auth_headers)
+    assert resp.status_code == 200
+    assert resp.json()["step"] == 0
+
+
+def test_setup_status_corrupt_persona_file(test_client, setup_config_dir):
+    """GET /api/setup/status with corrupt persona file → persona is None."""
+    (setup_config_dir / "persona.json").write_text("bad json")
+    resp = test_client.get("/api/setup/status", headers=test_client.auth_headers)
+    assert resp.status_code == 200
+    assert resp.json()["persona"] is None
+
+
+# ---------------------------------------------------------------------------
+# Setup router — /api/setup/complete deletes progress file
+# ---------------------------------------------------------------------------
+
+
+def test_setup_complete_removes_progress(test_client, setup_config_dir):
+    """POST /api/setup/complete deletes setup-progress.json if it exists."""
+    import json
+    (setup_config_dir / "setup-progress.json").write_text(json.dumps({"step": 2}))
+    resp = test_client.post("/api/setup/complete", headers=test_client.auth_headers)
+    assert resp.status_code == 200
+    assert not (setup_config_dir / "setup-progress.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# Setup router — /api/setup/test (script not found fallback)
+# ---------------------------------------------------------------------------
+
+
+def test_setup_test_no_script_fallback(test_client, monkeypatch):
+    """POST /api/setup/test when script not found → streaming connectivity test."""
+    import routers.setup as setup_mod
+
+    monkeypatch.setattr(setup_mod, "INSTALL_DIR", "/tmp/nonexistent-dream")
+
+    resp = test_client.post("/api/setup/test", headers=test_client.auth_headers)
+    assert resp.status_code == 200
+    # StreamingResponse returns text/plain
+    assert "text/plain" in resp.headers["content-type"]
+
+
+# ---------------------------------------------------------------------------
+# Setup router — /api/chat
+# ---------------------------------------------------------------------------
+
+
+def test_chat_success(test_client, monkeypatch):
+    """POST /api/chat with mocked LLM → 200, returns response."""
+    resp_mock = AsyncMock()
+    resp_mock.status = 200
+    resp_mock.json = AsyncMock(return_value={
+        "choices": [{"message": {"content": "Hello from the LLM!"}}]
+    })
+
+    ctx = AsyncMock()
+    ctx.__aenter__ = AsyncMock(return_value=resp_mock)
+    ctx.__aexit__ = AsyncMock(return_value=False)
+
+    session_mock = MagicMock()
+    session_mock.post = MagicMock(return_value=ctx)
+    session_ctx = AsyncMock()
+    session_ctx.__aenter__ = AsyncMock(return_value=session_mock)
+    session_ctx.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("routers.setup.aiohttp.ClientSession", return_value=session_ctx):
+        resp = test_client.post(
+            "/api/chat",
+            json={"message": "hi", "system": "You are helpful"},
+            headers=test_client.auth_headers,
+        )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["success"] is True
+    assert data["response"] == "Hello from the LLM!"
+
+
+def test_chat_llm_error(test_client, monkeypatch):
+    """POST /api/chat when LLM returns non-200 → HTTPException."""
+    resp_mock = AsyncMock()
+    resp_mock.status = 500
+    resp_mock.text = AsyncMock(return_value="internal error")
+
+    ctx = AsyncMock()
+    ctx.__aenter__ = AsyncMock(return_value=resp_mock)
+    ctx.__aexit__ = AsyncMock(return_value=False)
+
+    session_mock = MagicMock()
+    session_mock.post = MagicMock(return_value=ctx)
+    session_ctx = AsyncMock()
+    session_ctx.__aenter__ = AsyncMock(return_value=session_mock)
+    session_ctx.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("routers.setup.aiohttp.ClientSession", return_value=session_ctx):
+        resp = test_client.post(
+            "/api/chat",
+            json={"message": "hi"},
+            headers=test_client.auth_headers,
+        )
+
+    assert resp.status_code == 500
+
+
+def test_chat_connection_error(test_client, monkeypatch):
+    """POST /api/chat when LLM is unreachable → 503."""
+    import aiohttp
+
+    session_mock = MagicMock()
+    session_mock.post = MagicMock(side_effect=aiohttp.ClientError("refused"))
+    session_ctx = AsyncMock()
+    session_ctx.__aenter__ = AsyncMock(return_value=session_mock)
+    session_ctx.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("routers.setup.aiohttp.ClientSession", return_value=session_ctx):
+        resp = test_client.post(
+            "/api/chat",
+            json={"message": "hi"},
+            headers=test_client.auth_headers,
+        )
+
+    assert resp.status_code == 503
+

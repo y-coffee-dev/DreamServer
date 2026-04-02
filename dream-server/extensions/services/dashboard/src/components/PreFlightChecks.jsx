@@ -110,9 +110,14 @@ export function PreFlightChecks({ onComplete, onIssuesFound }) {
       }
       const data = await response.json()
       if (data.available) {
-        return { status: 'success', message: `${data.name} (${data.vram}GB VRAM)` }
+        const vramLabel = data.memory_type === 'unified' ? data.memory_label : `${data.vram}GB VRAM`
+        return { status: 'success', message: `${data.name} (${vramLabel})` }
       }
-      return { status: 'warning', message: 'No GPU detected', fix: 'Install NVIDIA drivers and Container Toolkit' }
+      // Use backend-specific error from API if available
+      if (data.error) {
+        return { status: 'warning', message: 'No GPU detected', fix: data.error }
+      }
+      return { status: 'warning', message: 'No GPU detected', fix: 'Check GPU drivers are installed' }
     } catch (e) {
       return { status: 'warning', message: 'Check skipped', details: e.message }
     }
@@ -179,7 +184,7 @@ export function PreFlightChecks({ onComplete, onIssuesFound }) {
 
   const getStatusIcon = (check) => {
     if (check.status === 'checking') {
-      return <Loader2 className="w-5 h-5 text-indigo-400 animate-spin" />
+      return <Loader2 className="w-5 h-5 text-theme-accent animate-spin" />
     }
     if (check.status === 'success') {
       return <CheckCircle className="w-5 h-5 text-emerald-400" />
@@ -194,12 +199,12 @@ export function PreFlightChecks({ onComplete, onIssuesFound }) {
     if (status === 'success') return 'border-emerald-500/30 bg-emerald-500/5'
     if (status === 'error') return 'border-red-500/30 bg-red-500/5'
     if (status === 'warning') return 'border-amber-500/30 bg-amber-500/5'
-    return 'border-zinc-700 bg-zinc-800/50'
+    return 'border-theme-border bg-theme-card/50'
   }
 
   return (
     <div className="space-y-3">
-      <h3 className="text-sm font-medium text-zinc-300 mb-3">
+      <h3 className="text-sm font-medium text-theme-text mb-3">
         {running ? 'Checking system readiness...' : 'System checks complete'}
       </h3>
       
@@ -215,23 +220,23 @@ export function PreFlightChecks({ onComplete, onIssuesFound }) {
             </div>
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2">
-                <Icon className="w-4 h-4 text-zinc-500" />
-                <span className="text-sm font-medium text-zinc-200">{check.name}</span>
+                <Icon className="w-4 h-4 text-theme-text-muted" />
+                <span className="text-sm font-medium text-theme-text">{check.name}</span>
               </div>
               <p className={`text-sm mt-1 ${
                 check.status === 'error' ? 'text-red-300' :
                 check.status === 'warning' ? 'text-amber-300' :
                 check.status === 'success' ? 'text-emerald-300' :
-                'text-zinc-400'
+                'text-theme-text-secondary'
               }`}>
                 {check.message}
               </p>
               {check.details && (
-                <p className="text-xs text-zinc-500 mt-1">{check.details}</p>
+                <p className="text-xs text-theme-text-muted mt-1">{check.details}</p>
               )}
               {check.fix && (
-                <div className="mt-2 p-2 bg-zinc-900/50 rounded text-xs text-zinc-400">
-                  <span className="text-indigo-400 font-medium">Fix:</span> {check.fix}
+                <div className="mt-2 p-2 bg-theme-card rounded text-xs text-theme-text-muted">
+                  <span className="text-theme-accent font-medium">Fix:</span> {check.fix}
                 </div>
               )}
             </div>

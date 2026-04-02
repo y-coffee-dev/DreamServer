@@ -169,7 +169,7 @@ OLLAMA_PORT=8080
 WEBUI_PORT=3000
 SEARXNG_PORT=8888
 PERPLEXICA_PORT=3004
-WHISPER_PORT=9000
+WHISPER_PORT=${WHISPER_PORT:-9000}
 TTS_PORT=8880
 N8N_PORT=5678
 QDRANT_PORT=6333
@@ -182,7 +182,7 @@ LANGFUSE_PORT=3006
 #=== Security (auto-generated, keep secret!) ===
 WEBUI_SECRET=${webui_secret}
 DASHBOARD_API_KEY=${dashboard_api_key}
-N8N_USER=admin
+N8N_USER=admin@dreamserver.local
 N8N_PASS=${n8n_pass}
 LITELLM_KEY=${litellm_key}
 LIVEKIT_API_KEY=${livekit_api_key}
@@ -204,7 +204,6 @@ ENABLE_WEB_SEARCH=true
 WEB_SEARCH_ENGINE=searxng
 
 #=== n8n Settings ===
-N8N_AUTH=true
 N8N_HOST=localhost
 N8N_WEBHOOK_URL=http://localhost:5678
 TIMEZONE=${tz}

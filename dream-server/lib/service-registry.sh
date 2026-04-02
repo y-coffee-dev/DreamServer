@@ -4,6 +4,7 @@
 
 EXTENSIONS_DIR="${SCRIPT_DIR:-$(pwd)}/extensions/services"
 _SR_LOADED=false
+_SR_FAILED=false
 _SR_CACHE="/tmp/dream-service-registry.$$.sh"
 
 # Caching for compose flags (session-level)
@@ -53,7 +54,24 @@ sr_load() {
         PYTHON_CMD="python"
     fi
 
-    "$PYTHON_CMD" - "$EXTENSIONS_DIR" <<'PYEOF' > "$_SR_CACHE"
+    # Ensure PyYAML is available (Arch, Void, Alpine don't ship it by default)
+    if ! "$PYTHON_CMD" -c "import yaml" 2>/dev/null; then
+        if declare -f pkg_install &>/dev/null && declare -f pkg_resolve &>/dev/null; then
+            [[ -z "${PKG_MANAGER:-}" ]] && declare -f detect_pkg_manager &>/dev/null && detect_pkg_manager
+            declare -f log &>/dev/null && log "PyYAML not found; installing system package..."
+            # shellcheck disable=SC2046
+            pkg_install $(pkg_resolve python3-pyyaml) 2>>"${LOG_FILE:-/dev/null}" || true
+        fi
+        if ! "$PYTHON_CMD" -c "import yaml" 2>/dev/null; then
+            declare -f warn &>/dev/null && warn "PyYAML not available. Service registry will be incomplete."
+            declare -f warn &>/dev/null && warn "Install manually: pip3 install pyyaml"
+            _SR_LOADED=true  # Prevent repeated retries
+            _SR_FAILED=true
+            return 0
+        fi
+    fi
+
+    if ! "$PYTHON_CMD" - "$EXTENSIONS_DIR" <<'PYEOF' > "$_SR_CACHE"
 import yaml, sys, os
 from pathlib import Path
 
@@ -161,11 +179,36 @@ for service_dir in sorted(ext_dir.iterdir()):
         print(f'# ERROR: failed to parse {manifest_path}: {exc}', file=sys.stderr)
         continue
 PYEOF
+    then
+        rm -f "$_SR_CACHE"
+        declare -f warn &>/dev/null && warn "Service registry: manifest parser failed"
+        _SR_LOADED=true  # Prevent repeated retries
+        _SR_FAILED=true
+        return 0
+    fi
 
     # Source the generated registry (one subprocess for all manifests)
     [[ -f "$_SR_CACHE" ]] && . "$_SR_CACHE"
     rm -f "$_SR_CACHE"
     _SR_LOADED=true
+}
+
+# Update SERVICE_PORTS with actual values from environment variables.
+# Call AFTER sr_load + load_env_file so the env vars are populated.
+# Uses SERVICE_PORT_ENVS (e.g. llama-server → OLLAMA_PORT) to resolve
+# the env var name, then indirect expansion to get its value.
+sr_resolve_ports() {
+    for _sid in "${SERVICE_IDS[@]}"; do
+        local _port_env="${SERVICE_PORT_ENVS[$_sid]:-}"
+        if [[ -n "$_port_env" && -n "${!_port_env:-}" ]]; then
+            SERVICE_PORTS[$_sid]="${!_port_env}"
+        fi
+    done
+
+    # Lemonade (AMD) serves health at /api/v1/health, not /health
+    if [[ "${GPU_BACKEND:-}" == "amd" ]]; then
+        SERVICE_HEALTH[llama-server]="/api/v1/health"
+    fi
 }
 
 # Resolve a user-provided name to a compose service ID

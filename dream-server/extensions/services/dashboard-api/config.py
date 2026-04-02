@@ -69,6 +69,12 @@ def load_extension_manifests(
 
     for path in manifest_files:
         try:
+            # Skip disabled extensions (compose.yaml.disabled convention)
+            ext_dir = path.parent
+            if (ext_dir / "compose.yaml.disabled").exists() or (ext_dir / "compose.yml.disabled").exists():
+                logger.debug("Skipping disabled extension: %s", ext_dir.name)
+                continue
+
             manifest = _read_manifest_file(path)
             if manifest.get("schema_version") != "dream.services.v1":
                 logger.warning("Skipping manifest with unsupported schema_version: %s", path)
@@ -135,6 +141,13 @@ MANIFEST_SERVICES, MANIFEST_FEATURES, MANIFEST_ERRORS = load_extension_manifests
 SERVICES = MANIFEST_SERVICES
 if not SERVICES:
     logger.error("No services loaded from manifests in %s — dashboard will have no services", EXTENSIONS_DIR)
+
+# Lemonade serves at /api/v1 instead of llama.cpp's /v1. Override the
+# health path so the dashboard poll loop hits the correct endpoint.
+LLM_BACKEND = os.environ.get("LLM_BACKEND", "")
+if LLM_BACKEND == "lemonade" and "llama-server" in SERVICES:
+    SERVICES["llama-server"]["health"] = "/api/v1/health"
+    logger.info("Lemonade backend detected — overriding llama-server health to /api/v1/health")
 
 # --- Features ---
 

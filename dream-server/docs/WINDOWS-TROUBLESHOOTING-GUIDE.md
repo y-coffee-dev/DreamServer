@@ -16,6 +16,28 @@
 
 ---
 
+## Docker Compose failed (during install or `dream.ps1`)
+
+If **`install-windows.ps1`** stops with **docker compose up failed**, or **`.\dream.ps1`** reports a compose error on **start / stop / restart / update**, the installer and CLI print a **COMPOSE FAILURE DIAGNOSTICS** block. Please save that entire block when asking for help (Discord, GitHub, etc.).
+
+What the diagnostics include (in order):
+
+1. **`docker version`** — confirms the Docker client can talk to the engine.
+2. **`docker info`** (first lines) — daemon state, WSL2, disk, etc.
+3. **`docker compose … config`** (last lines of output) — merged compose after variable substitution (uses `.env` when present). If there is a YAML merge or syntax error, it often appears here.
+4. **`docker compose … ps -a`** — which containers exist and their state.
+
+**Things to check on your machine before re-running:**
+
+- Docker Desktop is **running** (whale icon in the tray) and **WSL 2** is enabled for the engine (Settings → General).
+- No other app is blocking the same **ports** as in `.env` (e.g. another stack using 3000, 8080, 11434).
+- Enough **disk space** for images and volumes.
+- If you edited compose files or added overrides, temporarily remove **`docker-compose.override.yml`** and try again.
+
+For GPU and WSL2-specific steps, see **WINDOWS-WSL2-GPU-GUIDE.md** in the same `docs` folder.
+
+---
+
 ## Before You Start
 
 ### What You Need

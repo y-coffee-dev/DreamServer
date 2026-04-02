@@ -24,7 +24,7 @@ service:
   env_vars:
     - key: N8N_USER
       required: true
-      description: n8n admin username
+      description: n8n initial admin email address
     - key: N8N_PASS
       required: true
       secret: true

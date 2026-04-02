@@ -7,6 +7,7 @@
 #
 # Reads:
 #   $voiceFlag, $workflowsFlag, $ragFlag, $openClawFlag, $allFlag
+#   $comfyuiFlag, $noComfyuiFlag
 #   $nonInteractive  -- suppress menus (use flag defaults)
 #   $dryRun          -- skip prompts, log only
 #   $selectedTier    -- from phase 02, for tier-appropriate OpenClaw config
@@ -16,6 +17,7 @@
 #   $enableWorkflows  -- bool: enable n8n workflow automation
 #   $enableRag        -- bool: enable Qdrant + embeddings (RAG)
 #   $enableOpenClaw   -- bool: enable OpenClaw agent framework
+#   $enableComfyui    -- bool: enable ComfyUI image generation
 #   $openClawConfig   -- string: tier-appropriate OpenClaw config filename
 #
 # Modder notes:
@@ -31,6 +33,7 @@ $enableVoice      = $voiceFlag -or $allFlag
 $enableWorkflows  = $workflowsFlag -or $allFlag
 $enableRag        = $ragFlag -or $allFlag
 $enableOpenClaw   = $openClawFlag -or $allFlag
+$enableComfyui    = -not $noComfyuiFlag
 
 # ── Interactive menu (skipped in non-interactive / dry-run / --All mode) ──────
 if (-not $nonInteractive -and -not $allFlag -and -not $dryRun) {
@@ -49,6 +52,7 @@ if (-not $nonInteractive -and -not $allFlag -and -not $dryRun) {
             $enableWorkflows = $false
             $enableRag       = $false
             $enableOpenClaw  = $false
+            $enableComfyui   = $false
         }
         "3" {
             Write-Host ""
@@ -56,6 +60,13 @@ if (-not $nonInteractive -and -not $allFlag -and -not $dryRun) {
             $enableWorkflows = (Read-Host "  Enable Workflows (n8n, 400+ integrations)? [y/N]") -match "^[yY]"
             $enableRag       = (Read-Host "  Enable RAG (Qdrant vector DB + embeddings)? [y/N]") -match "^[yY]"
             $enableOpenClaw  = (Read-Host "  Enable OpenClaw (autonomous AI agents)?    [y/N]") -match "^[yY]"
+            $enableComfyui   = (Read-Host "  Enable image generation (ComfyUI + SDXL Lightning, ~6.5GB)? [y/N]") -match "^[yY]"
+
+            # Warn on low-tier
+            if ($enableComfyui -and ($selectedTier -eq "0" -or $selectedTier -eq "1")) {
+                Write-AIWarn "ComfyUI requires 8GB+ RAM and a dedicated GPU. Your Tier $selectedTier system may not support it."
+                $enableComfyui = (Read-Host "  Continue with image generation enabled? [y/N]") -match "^[yY]"
+            }
         }
         default {
             # "" (Enter) and "1" both select Full Stack
@@ -63,8 +74,29 @@ if (-not $nonInteractive -and -not $allFlag -and -not $dryRun) {
             $enableWorkflows = $true
             $enableRag       = $true
             $enableOpenClaw  = $true
+            $enableComfyui   = $true
+
+            # Disable image generation on low-tier systems (insufficient RAM/VRAM)
+            if ($selectedTier -eq "0" -or $selectedTier -eq "1") {
+                $enableComfyui = $false
+                Write-AIWarn "Image generation (ComfyUI) disabled -- your hardware doesn't have enough RAM."
+                Write-AI "  You can enable it later with: dream enable comfyui"
+            }
         }
     }
+}
+
+# Tier safety net: disable ComfyUI on Tier 0/1 or CLOUD in non-interactive mode.
+# Interactive mode has its own tier checks in the menu — this catches -NonInteractive.
+if ($nonInteractive -and $enableComfyui -and ($selectedTier -eq "0" -or $selectedTier -eq "1")) {
+    $enableComfyui = $false
+    Write-AI "ComfyUI auto-disabled for Tier $selectedTier (insufficient RAM for shm_size 8GB)"
+}
+
+# CLOUD tier cannot use ComfyUI (no local GPU for image generation)
+if ($enableComfyui -and $selectedTier -eq "CLOUD") {
+    $enableComfyui = $false
+    Write-AIWarn "ComfyUI disabled for CLOUD tier (requires local GPU for image generation)"
 }
 
 # ── Feature summary ───────────────────────────────────────────────────────────
@@ -74,6 +106,7 @@ Write-InfoBox "  Voice (Whisper + Kokoro):" $(if ($enableVoice)     { "enabled" 
 Write-InfoBox "  Workflows (n8n):"          $(if ($enableWorkflows) { "enabled" } else { "disabled" })
 Write-InfoBox "  RAG (Qdrant + embeddings):" $(if ($enableRag)      { "enabled" } else { "disabled" })
 Write-InfoBox "  Agents (OpenClaw):"         $(if ($enableOpenClaw) { "enabled" } else { "disabled" })
+Write-InfoBox "  Image gen (ComfyUI):"        $(if ($enableComfyui)  { "enabled" } else { "disabled" })
 
 # ── Tier-appropriate OpenClaw config selection ────────────────────────────────
 # Mirrors bash phase 03 logic (config/openclaw/<profile>.json).

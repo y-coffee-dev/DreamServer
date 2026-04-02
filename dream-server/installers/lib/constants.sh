@@ -14,7 +14,7 @@
 #   Change VERSION for custom builds. Add new color codes here.
 # ============================================================================
 
-VERSION="2.0.0-strix-halo"
+VERSION="2.4.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 # Source path utilities for cross-platform path resolution
@@ -49,6 +49,7 @@ BGRN='\033[1;32m'        # Bright green — emphasis, success, headings
 DGRN='\033[2;32m'        # Dim green — secondary text, lore
 AMB='\033[0;33m'         # Amber — warnings, ETA labels
 WHT='\033[1;37m'         # White — key URLs
+DIM='\033[2;37m'         # Dim white
 NC='\033[0m'             # Reset
 CURSOR='█'               # Block cursor for typing
 

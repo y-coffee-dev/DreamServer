@@ -57,12 +57,52 @@ else
     if $DRY_RUN; then
         log "[DRY RUN] Would install Docker via official script"
     else
-        tmpfile=$(mktemp /tmp/install-docker.XXXXXX.sh)
-        if ! curl -fsSL --max-time 300 https://get.docker.com -o "$tmpfile" || ! sh "$tmpfile"; then
-            rm -f "$tmpfile"
-            error "Docker installation failed. Check network connectivity and try again."
+        # In non-interactive mode, fail fast if sudo requires a password
+        if [[ "${INTERACTIVE:-true}" != "true" ]] && ! sudo -n true 2>/dev/null; then
+            ai_bad "Docker is not installed and sudo requires a password."
+            ai_bad "In non-interactive mode, either:"
+            ai "  1. Run with passwordless sudo (NOPASSWD in sudoers)"
+            ai "  2. Install Docker manually first, then re-run with --skip-docker"
+            ai "  3. Run the installer interactively (without --non-interactive)"
+            error "Cannot install Docker without sudo in non-interactive mode."
         fi
-        rm -f "$tmpfile"
+
+        case "$PKG_MANAGER" in
+            apt|dnf|zypper)
+                # Docker CE via get.docker.com (supports Debian/Ubuntu/Fedora/RHEL/SLES)
+                tmpfile=$(mktemp /tmp/install-docker.XXXXXX.sh)
+                if ! curl -fsSL --max-time 300 https://get.docker.com -o "$tmpfile" || ! sh "$tmpfile"; then
+                    rm -f "$tmpfile"
+                    error "Docker installation failed. Check network connectivity and try again."
+                fi
+                rm -f "$tmpfile"
+                ;;
+            pacman)
+                # Arch/Manjaro/CachyOS/EndeavourOS -- Docker is in the official repos
+                pkg_install docker
+                sudo systemctl enable --now docker.service 2>>"$LOG_FILE" || true
+                ;;
+            xbps)
+                # Void Linux -- runit service management
+                pkg_install docker
+                sudo ln -s /etc/sv/docker /var/service/ 2>/dev/null || true
+                ;;
+            apk)
+                # Alpine -- OpenRC service management
+                pkg_install docker
+                sudo rc-update add docker boot 2>>"$LOG_FILE" || true
+                sudo service docker start 2>>"$LOG_FILE" || true
+                ;;
+            *)
+                # Unknown distro -- try get.docker.com as best-effort fallback
+                tmpfile=$(mktemp /tmp/install-docker.XXXXXX.sh)
+                if ! curl -fsSL --max-time 300 https://get.docker.com -o "$tmpfile" || ! sh "$tmpfile"; then
+                    rm -f "$tmpfile"
+                    error "Docker installation failed. Your distro (${DISTRO_ID:-unknown}) may not be supported. Install Docker manually and re-run with --skip-docker."
+                fi
+                rm -f "$tmpfile"
+                ;;
+        esac
 
         # Add the invoking user (not root) to the docker group
         target_user="${SUDO_USER:-$USER}"
@@ -75,13 +115,50 @@ else
     fi
 fi
 
+# Docker 29.3.x has a bug with /dev/dri device passthrough on AMD GPUs.
+# Containers fail with: "error gathering device information while adding custom device /dev/dri"
+# Pin to 29.2.x until this is resolved upstream.
+# See: https://github.com/moby/moby/issues — device passthrough regression in 29.3.0
+if command -v docker &>/dev/null && ! $DRY_RUN; then
+    _docker_ver=$(docker version --format '{{.Server.Version}}' 2>/dev/null || echo "0.0.0")
+    if [[ "$_docker_ver" == 29.3.* ]] && [[ "${GPU_BACKEND:-}" == "amd" ]]; then
+        ai_warn "Docker $_docker_ver has a known bug with AMD GPU device passthrough."
+        ai "Downgrading to Docker 29.2.1 for AMD GPU compatibility..."
+        # Detect package format
+        if command -v apt-get &>/dev/null; then
+            _distro_codename=$(. /etc/os-release 2>/dev/null && echo "$VERSION_CODENAME" || echo "noble")
+            sudo apt-get install -y --allow-downgrades \
+                docker-ce=5:29.2.1-1~ubuntu."$(. /etc/os-release && echo "$VERSION_ID")"~"$_distro_codename" \
+                docker-ce-cli=5:29.2.1-1~ubuntu."$(. /etc/os-release && echo "$VERSION_ID")"~"$_distro_codename" \
+                >> "$LOG_FILE" 2>&1 && \
+                ai_ok "Docker downgraded to 29.2.1 (AMD GPU fix)" || \
+                ai_warn "Could not downgrade Docker. GPU containers may fail. Manual fix: sudo apt install docker-ce=5:29.2.1-1~ubuntu.24.04~noble"
+        elif command -v dnf &>/dev/null; then
+            sudo dnf downgrade -y docker-ce-29.2.1 docker-ce-cli-29.2.1 >> "$LOG_FILE" 2>&1 && \
+                ai_ok "Docker downgraded to 29.2.1 (AMD GPU fix)" || \
+                ai_warn "Could not downgrade Docker. GPU containers may fail."
+        elif command -v pacman &>/dev/null; then
+            # pacman does not support version pinning from official repos.
+            # Warn the user with clear manual instructions.
+            ai_warn "Automatic Docker downgrade is not supported on pacman-based distros."
+            ai_warn "GPU containers may fail with device passthrough errors."
+            ai "  Manual fix: downgrade Docker from the Arch Linux Archive:"
+            ai "    sudo pacman -U https://archive.archlinux.org/packages/d/docker/docker-1%3A29.2.1-1-x86_64.pkg.tar.zst"
+            ai "  Or wait for Docker to fix the bug in a future release."
+        else
+            ai_warn "Could not downgrade Docker on this system. GPU containers may fail."
+        fi
+        sudo systemctl restart docker 2>/dev/null || true
+    fi
+fi
+
 # Decide whether to use sudo for the rest of this installer session
 if [[ "${DOCKER_CMD:-}" == "" ]]; then
     if $DOCKER_NEEDS_SUDO; then
         warn "Docker installed, but group membership may not be active yet (re-login required)."
         if [[ "${INTERACTIVE:-true}" == "true" ]]; then
             echo ""
-            read -p "  Continue this installer using 'sudo docker' for now? [Y/n] " -r
+            read -p "  Continue this installer using 'sudo docker' for now? [Y/n] " -r < /dev/tty
             if [[ $REPLY =~ ^[Nn]$ ]]; then
                 log "Please re-run after logging out and back in (or after 'newgrp docker')."
                 exit 0
@@ -168,7 +245,14 @@ _docker_ensure_daemon() {
     if command -v systemctl &>/dev/null; then
         ai_warn "Docker not responding; attempting to start docker service..."
         if ! $DRY_RUN; then
+            # Clear start-limit-hit if docker has been restarted too many times
+            if systemctl is-failed docker &>/dev/null; then
+                ai_warn "Docker is in failed state (possible start-limit-hit). Resetting..."
+                sudo systemctl reset-failed docker 2>>"$LOG_FILE" || true
+            fi
             sudo systemctl start docker 2>>"$LOG_FILE" || true
+            # Give the daemon a moment to initialize
+            sleep 2
         fi
         if _docker_try_with_optional_sudo info; then
             return 0

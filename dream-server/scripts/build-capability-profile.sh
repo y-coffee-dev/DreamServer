@@ -61,6 +61,8 @@ if [[ -f "$ROOT_DIR/lib/service-registry.sh" ]]; then
     export SCRIPT_DIR="$ROOT_DIR"
     . "$ROOT_DIR/lib/service-registry.sh"
     sr_load
+    [[ -f "$ROOT_DIR/lib/safe-env.sh" ]] && . "$ROOT_DIR/lib/safe-env.sh"
+    [[ -f "$ROOT_DIR/.env" ]] && load_env_file "$ROOT_DIR/.env" && sr_resolve_ports
 fi
 _LLM_PORT="${SERVICE_PORTS[llama-server]:-11434}"
 _LLM_HEALTH="${SERVICE_HEALTH[llama-server]:-/health}"
@@ -96,7 +98,7 @@ gpu_type = (gpu.get("type") or "none").lower()
 gpu_name = gpu.get("name") or "None"
 memory_type = (gpu.get("memory_type") or "none").lower()
 vram_mb = int(gpu.get("vram_mb") or 0)
-gpu_count = 1 if gpu_type not in {"none", ""} else 0
+gpu_count = int(gpu.get("count") or (1 if gpu_type not in {"none", ""} else 0))
 
 llm_health_url = f"http://localhost:{llm_port}{llm_health}"
 llm_api_port = llm_port

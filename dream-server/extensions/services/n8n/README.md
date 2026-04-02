@@ -22,10 +22,10 @@ Environment variables (set in `.env`):
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `N8N_USER` | `admin` | Admin username (required) |
+| `N8N_USER` | `admin@dreamserver.local` | Admin email address (required) |
 | `N8N_PASS` | *(required)* | Admin password — set before first start |
 | `N8N_PORT` | `5678` | External port (maps to internal 5678) |
-| `N8N_AUTH` | `true` | Enable basic authentication |
+| `N8N_AUTH` | `true` | Deprecated: n8n v2.x has built-in user management |
 | `N8N_HOST` | `localhost` | Hostname used in generated URLs |
 | `N8N_WEBHOOK_URL` | `http://localhost:5678` | Public webhook base URL (set to your LAN IP for external access) |
 | `TIMEZONE` | `UTC` | Timezone for scheduled workflows |

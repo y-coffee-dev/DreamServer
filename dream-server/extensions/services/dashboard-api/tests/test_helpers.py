@@ -14,6 +14,8 @@ from helpers import (
     check_service_health, get_all_services,
     get_llama_metrics, get_loaded_model, get_llama_context_size,
     get_disk_usage,
+    _get_aio_session, set_services_cache, get_cached_services,
+    _check_host_service_health, _get_lifetime_tokens,
 )
 from models import BootstrapStatus, ServiceStatus, DiskUsage
 
@@ -544,3 +546,259 @@ class TestGetDiskUsage:
         assert isinstance(result, DiskUsage)
         assert result.path == os.path.expanduser("~")
         assert result.total_gb > 0
+
+
+# --- _get_aio_session ---
+
+
+class TestGetAioSession:
+
+    @pytest.mark.asyncio
+    async def test_creates_session(self, monkeypatch):
+        import helpers
+        monkeypatch.setattr(helpers, "_aio_session", None)
+        session = await _get_aio_session()
+        assert session is not None
+        await session.close()
+
+    @pytest.mark.asyncio
+    async def test_reuses_session(self, monkeypatch):
+        import helpers
+        monkeypatch.setattr(helpers, "_aio_session", None)
+        s1 = await _get_aio_session()
+        s2 = await _get_aio_session()
+        assert s1 is s2
+        await s1.close()
+
+
+# --- set_services_cache / get_cached_services ---
+
+
+class TestServicesCache:
+
+    def test_set_and_get(self, monkeypatch):
+        import helpers
+        monkeypatch.setattr(helpers, "_services_cache", None)
+        assert get_cached_services() is None
+        fake = [ServiceStatus(id="s", name="S", port=80, external_port=80, status="healthy")]
+        set_services_cache(fake)
+        assert get_cached_services() is fake
+
+
+# --- _get_lifetime_tokens ---
+
+
+class TestGetLifetimeTokens:
+
+    def test_returns_zero_when_no_file(self, data_dir):
+        assert _get_lifetime_tokens() == 0
+
+    def test_returns_lifetime_from_file(self, data_dir):
+        token_file = data_dir / "token_counter.json"
+        token_file.write_text(json.dumps({"lifetime": 42}))
+        assert _get_lifetime_tokens() == 42
+
+
+# --- check_service_health host-systemd ---
+
+
+class TestCheckServiceHealthSystemd:
+
+    @pytest.mark.asyncio
+    async def test_host_systemd_returns_healthy(self):
+        config = {
+            "name": "opencode", "port": 3003, "external_port": 3003,
+            "health": "/health", "host": "localhost", "type": "host-systemd",
+        }
+        result = await check_service_health("opencode", config)
+        assert result.status == "healthy"
+        assert result.response_time_ms is None
+
+
+# --- _check_host_service_health ---
+
+
+class TestCheckHostServiceHealth:
+
+    _CONFIG = {
+        "name": "test-host-svc", "port": 3003, "external_port": 3003,
+        "health": "/health", "host": "localhost",
+    }
+
+    @pytest.mark.asyncio
+    async def test_healthy_on_200(self, mock_aiohttp_session, monkeypatch):
+        session = mock_aiohttp_session(status=200)
+        monkeypatch.setattr("helpers._get_aio_session", AsyncMock(return_value=session))
+        result = await _check_host_service_health("test-host-svc", self._CONFIG)
+        assert result.status == "healthy"
+
+    @pytest.mark.asyncio
+    async def test_down_on_timeout(self, monkeypatch):
+        session = MagicMock()
+        session.get = MagicMock(side_effect=asyncio.TimeoutError())
+        monkeypatch.setattr("helpers._get_aio_session", AsyncMock(return_value=session))
+        result = await _check_host_service_health("test-host-svc", self._CONFIG)
+        assert result.status == "down"
+
+    @pytest.mark.asyncio
+    async def test_down_on_connector_error(self, monkeypatch):
+        conn_key = MagicMock()
+        exc = aiohttp.ClientConnectorError(conn_key, OSError("Connection refused"))
+        session = MagicMock()
+        session.get = MagicMock(side_effect=exc)
+        monkeypatch.setattr("helpers._get_aio_session", AsyncMock(return_value=session))
+        result = await _check_host_service_health("test-host-svc", self._CONFIG)
+        assert result.status == "down"
+
+    @pytest.mark.asyncio
+    async def test_down_on_os_error(self, monkeypatch):
+        session = MagicMock()
+        session.get = MagicMock(side_effect=OSError("broken"))
+        monkeypatch.setattr("helpers._get_aio_session", AsyncMock(return_value=session))
+        result = await _check_host_service_health("test-host-svc", self._CONFIG)
+        assert result.status == "down"
+
+
+# --- get_model_info error branch ---
+
+
+class TestGetModelInfoErrors:
+
+    def test_returns_none_on_os_error(self, install_dir, monkeypatch):
+        env_file = install_dir / ".env"
+        env_file.write_text('LLM_MODEL=test\n')
+        # Make the open fail after exists() returns True
+        import builtins
+        orig_open = builtins.open
+        def failing_open(path, *a, **kw):
+            if str(path).endswith(".env"):
+                raise OSError("permission denied")
+            return orig_open(path, *a, **kw)
+        monkeypatch.setattr(builtins, "open", failing_open)
+        assert get_model_info() is None
+
+
+# --- get_bootstrap_status eta/percent branches ---
+
+
+class TestGetBootstrapStatusEdgeCases:
+
+    def test_eta_single_seconds_value(self, data_dir):
+        status_file = data_dir / "bootstrap-status.json"
+        status_file.write_text(json.dumps({
+            "status": "downloading", "percent": 90, "eta": "45s",
+        }))
+        status = get_bootstrap_status()
+        assert status.active is True
+        assert status.eta_seconds == 45
+
+    def test_invalid_percent_type(self, data_dir):
+        status_file = data_dir / "bootstrap-status.json"
+        status_file.write_text(json.dumps({
+            "status": "downloading", "percent": "not-a-number",
+            "bytesDownloaded": 100,
+        }))
+        status = get_bootstrap_status()
+        assert status.active is True
+        assert status.percent is None
+
+    def test_speed_and_sizes(self, data_dir):
+        status_file = data_dir / "bootstrap-status.json"
+        status_file.write_text(json.dumps({
+            "status": "downloading",
+            "bytesDownloaded": 2 * 1024**3,
+            "bytesTotal": 10 * 1024**3,
+            "speedBytesPerSec": 100 * 1024**2,
+        }))
+        status = get_bootstrap_status()
+        assert status.active is True
+        assert status.downloaded_gb is not None
+        assert abs(status.downloaded_gb - 2.0) < 0.01
+        assert status.speed_mbps is not None
+
+
+# --- get_uptime platform branches ---
+
+
+class TestGetUptimePlatforms:
+
+    def test_linux_reads_proc_uptime(self, monkeypatch):
+        monkeypatch.setattr("helpers.platform.system", lambda: "Linux")
+        import builtins
+        orig_open = builtins.open
+        def fake_open(path, *a, **kw):
+            if str(path) == "/proc/uptime":
+                from io import StringIO
+                return StringIO("12345.67 9876.54")
+            return orig_open(path, *a, **kw)
+        monkeypatch.setattr(builtins, "open", fake_open)
+        assert get_uptime() == 12345
+
+    def test_darwin_branch(self, monkeypatch):
+        monkeypatch.setattr("helpers.platform.system", lambda: "Darwin")
+        import time
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        boot_time = int(time.time()) - 600
+        mock_result.stdout = f"{{ sec = {boot_time}, usec = 0 }} Mon Jan 1 00:00:00 2026"
+        monkeypatch.setattr("subprocess.run", lambda *a, **kw: mock_result)
+        result = get_uptime()
+        assert 595 <= result <= 610
+
+
+# --- get_llama_metrics TPS calculation branch ---
+
+
+class TestGetLlamaMetricsTPS:
+
+    @pytest.mark.asyncio
+    async def test_tps_calculated_on_second_call(self, monkeypatch):
+        """TPS is calculated when previous token count and gen_secs are set."""
+        import helpers
+        import time as _time
+
+        fake_services = {
+            "llama-server": {"host": "localhost", "port": 8080, "health": "/health", "name": "llama-server"},
+        }
+        monkeypatch.setattr("helpers.SERVICES", fake_services)
+
+        # Set up previous state
+        helpers._prev_tokens.update({"count": 100, "time": _time.time() - 1, "tps": 0.0, "gen_secs": 5.0})
+
+        # Mock response with updated token counts
+        mock_response = MagicMock()
+        mock_response.text = (
+            "# HELP tokens_predicted_total\n"
+            "tokens_predicted_total 200\n"
+            "# HELP tokens_predicted_seconds_total\n"
+            "tokens_predicted_seconds_total 10.0\n"
+        )
+        mock_response.status_code = 200
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        monkeypatch.setattr("helpers.httpx.AsyncClient", lambda **kw: mock_client)
+
+        result = await get_llama_metrics(model_hint="test")
+        # 100 tokens / 5 seconds = 20.0 tps
+        assert result["tokens_per_second"] == 20.0
+
+
+# --- bootstrap status ETA edge cases ---
+
+
+class TestBootstrapStatusEtaEdge:
+
+    def test_invalid_eta_string(self, data_dir):
+        """ETA with unparseable content → eta_seconds is None."""
+        status_file = data_dir / "bootstrap-status.json"
+        status_file.write_text(json.dumps({
+            "status": "downloading", "percent": 50,
+            "eta": "not a number at all",
+        }))
+        status = get_bootstrap_status()
+        assert status.active is True
+        assert status.eta_seconds is None

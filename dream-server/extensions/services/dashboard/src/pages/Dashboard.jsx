@@ -15,6 +15,7 @@ import {
   Workflow,
   Image,
   Code,
+  ChevronRight,
 } from 'lucide-react'
 import { memo, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
@@ -28,11 +29,11 @@ const getExternalUrl = (port) =>
 
 // Compute overall health from services (excludes not_deployed from counts)
 function computeHealth(services) {
-  if (!services?.length) return { text: 'Waiting for telemetry...', color: 'text-zinc-400' }
+  if (!services?.length) return { text: 'Waiting for telemetry...', color: 'text-theme-text-secondary' }
   const deployed = services.filter(s => s.status !== 'not_deployed')
-  if (!deployed.length) return { text: 'No services deployed', color: 'text-zinc-400' }
+  if (!deployed.length) return { text: 'No services deployed', color: 'text-theme-text-secondary' }
   const healthy = deployed.filter(s => s.status === 'healthy').length
-  return { text: `${healthy}/${deployed.length} services online.`, color: healthy === deployed.length ? 'text-green-400' : 'text-zinc-400' }
+  return { text: `${healthy}/${deployed.length} services online.`, color: healthy === deployed.length ? 'text-green-400' : 'text-theme-text-secondary' }
 }
 
 const FEATURE_ICONS = {
@@ -142,11 +143,11 @@ export default function Dashboard({ status, loading }) {
   if (loading) {
     return (
       <div className="p-8 animate-pulse">
-        <div className="h-8 bg-zinc-800 rounded w-1/3 mb-4" />
-        <p className="text-sm text-zinc-500 mb-8">Linking modules... reading telemetry...</p>
+        <div className="h-8 bg-theme-card rounded w-1/3 mb-4" />
+        <p className="text-sm text-theme-text-muted mb-8">Linking modules... reading telemetry...</p>
         <div className="grid grid-cols-3 gap-6">
           {[...Array(6)].map((_, i) => (
-            <div key={i} className="h-40 bg-zinc-800 rounded-xl" />
+            <div key={i} className="h-40 bg-theme-card rounded-xl" />
           ))}
         </div>
       </div>
@@ -161,13 +162,13 @@ export default function Dashboard({ status, loading }) {
       {/* Header with live meta strip */}
       <div className="mb-8 flex items-start justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-white">Dashboard</h1>
+          <h1 className="text-2xl font-bold text-theme-text">Dashboard</h1>
           <p className={`mt-1 ${health.color}`}>
             {health.text}
           </p>
         </div>
-        <div className="flex items-center gap-4 text-xs text-zinc-500 font-mono bg-zinc-900/50 border border-zinc-800 rounded-lg px-3 py-2">
-          {status?.tier && <span className="text-indigo-300">{status.tier}</span>}
+        <div className="flex items-center gap-4 text-xs text-theme-text-muted font-mono bg-theme-card border border-theme-border rounded-lg px-3 py-2">
+          {status?.tier && <span className="text-theme-accent-light">{status.tier}</span>}
           {status?.model?.name && <span>{status.model.name}</span>}
           {status?.version && <span>v{status.version}</span>}
         </div>
@@ -177,7 +178,7 @@ export default function Dashboard({ status, loading }) {
       <FeatureDiscoveryBanner />
 
       {/* Feature Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-12">
         {features.length > 0 ? (
           features.map(feature => (
             <FeatureCard
@@ -208,9 +209,34 @@ export default function Dashboard({ status, loading }) {
         )}
       </div>
 
+      {/* Multi-GPU summary strip — only shown when gpu_count > 1 */}
+      {status?.gpu?.gpu_count > 1 && (
+        <Link to="/gpu" className="block mb-6">
+          <div className="flex items-center justify-between p-4 bg-indigo-500/10 border border-indigo-500/25 rounded-xl hover:border-indigo-500/45 transition-colors group">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-indigo-500/15 rounded-lg">
+                <Activity size={18} className="text-indigo-400" />
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-white">
+                  Multi-GPU System · {status.gpu.gpu_count} GPUs
+                </p>
+                <p className="text-xs text-zinc-400 mt-0.5">
+                  {status.gpu.name} · {status.gpu.utilization}% avg util · {status.gpu.vramUsed?.toFixed(1)}/{status.gpu.vramTotal} GB VRAM
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-1 text-xs text-indigo-400 group-hover:text-indigo-300 transition-colors font-medium">
+              GPU Monitor
+              <ChevronRight size={14} />
+            </div>
+          </div>
+        </Link>
+      )}
+
       {/* System Status */}
-      <h2 className="text-lg font-semibold text-white mb-4">System Status</h2>
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-8">
+      <h2 className="text-lg font-semibold text-theme-text mb-5">System Status</h2>
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-12">
         {status?.gpu && (
           <>
             <MetricCard
@@ -327,8 +353,8 @@ export default function Dashboard({ status, loading }) {
       </div>
 
       {/* Services Grid — sorted by severity */}
-      <h2 className="text-lg font-semibold text-white mb-4">Services</h2>
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-8">
+      <h2 className="text-lg font-semibold text-theme-text mb-5">Services</h2>
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-12">
         {servicesSorted.map(service => (
           <ServiceCard key={service.name} service={service} />
         ))}
@@ -343,32 +369,32 @@ export default function Dashboard({ status, loading }) {
 const FeatureCard = memo(function FeatureCard({ icon: Icon, title, description, href, status, hint }) {
   const isExternal = href?.startsWith('http')
   const statusColors = {
-    ready: 'border-indigo-500/20 hover:border-indigo-500/35',
-    disabled: 'border-zinc-700 opacity-60',
-    coming: 'border-zinc-700 opacity-40'
+    ready: 'border-theme-border bg-theme-card hover:border-theme-accent/30',
+    disabled: 'border-theme-border/60 bg-theme-card opacity-60',
+    coming: 'border-transparent bg-theme-bg/50 opacity-30'
   }
 
   const content = (
-    <div className={`p-6 rounded-xl border-2 ${statusColors[status]} bg-zinc-900/50 transition-all cursor-pointer hover:bg-zinc-800/50`}>
+    <div className={`p-7 rounded-xl border ${statusColors[status]} transition-all cursor-pointer hover:bg-theme-surface-hover hover:shadow-md`}>
       <div className="flex items-start justify-between mb-4">
-        <div className="p-3 bg-zinc-800 rounded-lg">
-          <Icon size={24} className="text-indigo-400" />
+        <div className="p-3 bg-theme-bg rounded-xl">
+          <Icon size={22} className="text-theme-text-secondary" />
         </div>
         {status === 'ready' && (
-          <span className="px-2 py-1 text-xs bg-green-500/20 text-green-400 rounded-full">
+          <span className="px-2.5 py-0.5 text-[11px] font-medium bg-green-500/15 text-green-600 rounded-full">
             Ready
           </span>
         )}
         {status === 'coming' && (
-          <span className="px-2 py-1 text-xs bg-zinc-700 text-zinc-400 rounded-full">
+          <span className="px-2.5 py-0.5 text-[11px] font-medium bg-theme-border/50 text-theme-text-muted rounded-full">
             Coming
           </span>
         )}
       </div>
-      <h3 className="text-lg font-semibold text-white mb-1">{title}</h3>
-      <p className="text-sm text-zinc-400">{description}</p>
+      <h3 className="text-[15px] font-extrabold text-theme-text mb-1">{title}</h3>
+      <p className="text-[13px] text-theme-text-muted/80 leading-relaxed">{description}</p>
       {status === 'disabled' && hint && (
-        <p className="text-xs text-zinc-500 mt-3 font-mono">{hint}</p>
+        <p className="text-xs text-theme-text-muted mt-3 font-mono">{hint}</p>
       )}
     </div>
   )
@@ -390,17 +416,17 @@ const FeatureCard = memo(function FeatureCard({ icon: Icon, title, description, 
 
 const MetricCard = memo(function MetricCard({ icon: Icon, label, value, subvalue, percent, alert }) {
   return (
-    <div className="p-4 bg-zinc-900/50 border border-zinc-800 rounded-xl overflow-hidden min-w-0">
-      <div className="flex items-center gap-3 mb-2">
-        <Icon size={18} className={alert ? 'text-red-400' : 'text-zinc-400'} />
-        <span className="text-sm text-zinc-400">{label}</span>
+    <div className="p-4 bg-theme-card border border-theme-border rounded-xl overflow-hidden min-w-0">
+      <div className="flex items-center gap-1.5 mb-2">
+        <Icon size={13} className={alert ? 'text-red-400' : 'text-theme-text-muted/50'} />
+        <span className="text-[9px] font-semibold uppercase tracking-[0.15em] text-theme-text-muted/50">{label}</span>
       </div>
-      <div className="text-xl font-semibold text-white font-mono truncate" title={value}>{value}</div>
-      <div className="text-xs text-zinc-500 mt-1">{subvalue}</div>
+      <div className="text-[28px] font-bold text-theme-text font-mono leading-none truncate" title={value}>{value}</div>
+      <div className="text-[10px] text-theme-text-muted/70 mt-1">{subvalue}</div>
       {percent !== undefined && (
-        <div className="h-1 bg-zinc-700 rounded-full mt-3 overflow-hidden">
+        <div className="h-[3px] bg-theme-border/30 rounded-full mt-3 overflow-hidden">
           <div
-            className={`h-full rounded-full transition-all ${percent > 90 ? 'bg-red-500' : percent > 70 ? 'bg-yellow-500' : 'bg-indigo-500'}`}
+            className={`h-full rounded-full transition-all ${percent > 90 ? 'bg-red-500' : percent > 70 ? 'bg-yellow-500' : 'bg-theme-accent'}`}
             style={{ width: `${Math.min(percent, 100)}%` }}
           />
         </div>
@@ -426,12 +452,12 @@ const ServiceCard = memo(function ServiceCard({ service }) {
   }
 
   return (
-    <div className="p-4 bg-zinc-900/50 border border-zinc-800 rounded-xl">
-      <div className="flex items-center gap-2 mb-2">
-        <div className={`w-2 h-2 rounded-full ${statusColors[service.status] || 'bg-zinc-500'}`} />
-        <span className="text-sm font-medium text-white">{service.name}</span>
+    <div className="px-4 py-5 bg-theme-card border border-theme-border rounded-xl">
+      <div className="flex items-center gap-2.5 mb-3">
+        <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${statusColors[service.status] || 'bg-zinc-500'}`} />
+        <span className="text-[13px] font-medium text-theme-text leading-tight">{service.name}</span>
       </div>
-      <div className="text-xs text-zinc-500 font-mono">
+      <div className="text-[10px] text-theme-text-muted/70 font-mono pl-4">
         {service.port ? `:${service.port} · ` : ''}{formatUptime(service.uptime)}
       </div>
     </div>

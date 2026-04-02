@@ -83,10 +83,16 @@ $_minRamGB = switch ($selectedTier) {
     default      { 16 }
 }
 
-if ($systemRamGB -lt $_minRamGB) {
+# Hard floor: Docker Desktop + WSL2 + containers need at least 8 GB to function
+if ($systemRamGB -lt 8) {
+    Write-AIError "RAM: ${systemRamGB} GB detected. Dream Server requires at least 8 GB."
+    Write-AIError "Docker Desktop + WSL2 + services need more memory than is available."
+    Write-AI "  With ${systemRamGB} GB, Docker alone consumes most available RAM."
+    $requirementsMet = $false
+} elseif ($systemRamGB -lt $_minRamGB) {
     Write-AIWarn "RAM: ${systemRamGB} GB available, ${_minRamGB} GB recommended for Tier $selectedTier."
     Write-AI "  Performance may be limited. Consider a lower tier with: --Tier <N>"
-    # RAM is a warning, not a hard blocker -- users may have trimmed WSL2 memory
+    # Tier-specific RAM is a warning, not a hard blocker -- users may have trimmed WSL2 memory
 } else {
     Write-AISuccess "RAM: ${systemRamGB} GB OK (>= ${_minRamGB} GB for Tier $selectedTier)"
 }
@@ -125,7 +131,7 @@ if ($selectedTier -notin @("0", "CLOUD") -and $gpuInfo.Backend -eq "none") {
 # Build list of ports to check based on enabled features.
 # Default service ports match .env.example; overridden ports are not checked here.
 $_portsToCheck = [ordered]@{
-    "llama-server (LLM)"  = 8080
+    "llama-server (LLM)"  = 11434
     "Open WebUI (chat)"   = 3000
     "Dashboard"           = 3001
     "Dashboard API"       = 3002

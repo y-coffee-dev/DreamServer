@@ -201,7 +201,7 @@ pull_with_progress() {
   local count=$3
   local total=$4
   local max_attempts=3
-  local pull_timeout=600  # 10 minutes for large images (CUDA is ~10GB)
+  local pull_timeout=3600  # 60 minutes for large images (CUDA is ~10GB)
   local pull_pid
 
   for attempt in $(seq 1 $max_attempts); do
@@ -285,21 +285,27 @@ check_service() {
     fi
 
     # Add timeout to prevent indefinite hangs
-    if timeout "$timeout" curl -sf "$url" > /dev/null 2>&1; then
+    # Capture exit code directly — an if/then would consume it (always 0)
+    timeout "$timeout" curl -sf "$url" > /dev/null 2>&1 && {
       printf "\r  ${BGRN}✓${NC} %-55s\n" "$name online"
       return 0
-    fi
+    }
 
     local curl_exit=$?
     elapsed=$((elapsed + backoff))
 
-    # Distinguish between timeout (124) and connection refused (7)
+    # Distinguish between timeout (124), connection refused (7),
+    # and transient startup errors (56 = recv error, 52 = empty reply)
     if [[ $curl_exit -eq 124 ]]; then
       # Timeout - service may be overloaded or slow
       printf "\r  ${AMB}⟳${NC} Linking %-20s [%ds] (timeout, retrying) " "$name" "$elapsed"
     elif [[ $curl_exit -eq 7 ]]; then
       # Connection refused - service not started yet
       printf "\r  ${GRN}%s${NC} Linking %-20s [%ds] " "${spin:$i:1}" "$name" "$elapsed"
+    elif [[ $curl_exit -eq 56 || $curl_exit -eq 52 ]]; then
+      # 56 = recv error (service resetting during startup/migrations)
+      # 52 = empty reply (service accepting connections but not ready)
+      printf "\r  ${GRN}%s${NC} Linking %-20s [%ds] (starting up) " "${spin:$i:1}" "$name" "$elapsed"
     else
       # Other error (DNS, network, etc.)
       printf "\r  ${AMB}⟳${NC} Linking %-20s [%ds] (error $curl_exit) " "$name" "$elapsed"
@@ -374,7 +380,7 @@ show_install_menu() {
     echo -e "  ${BGRN}[3]${NC} Custom"
     echo "      Choose exactly what you want"
     echo ""
-    read -p "  Select an option [1]: " -r INSTALL_CHOICE
+    read -p "  Select an option [1]: " -r INSTALL_CHOICE < /dev/tty
     INSTALL_CHOICE="${INSTALL_CHOICE:-1}"
     echo ""
     case "$INSTALL_CHOICE" in
@@ -385,10 +391,27 @@ show_install_menu() {
             ENABLE_WORKFLOWS=true
             ENABLE_RAG=true
             ENABLE_OPENCLAW=true
+            ENABLE_COMFYUI=true
+
+            # Disable image generation on low-tier systems (insufficient RAM/VRAM)
+            # ComfyUI requires shm_size 8GB + 24GB memory limit
+            case "${TIER:-}" in
+                0|1)
+                    ENABLE_COMFYUI=false
+                    log "ComfyUI auto-disabled for Tier $TIER (insufficient RAM/VRAM)"
+                    ai_warn "Image generation (ComfyUI) disabled — your hardware doesn't have enough RAM."
+                    ai "  You can enable it later with: dream enable comfyui"
+                    ;;
+            esac
             ;;
         2)
             signal "Acknowledged."
             log "Selected: Core Only"
+            ENABLE_VOICE=false
+            ENABLE_WORKFLOWS=false
+            ENABLE_RAG=false
+            ENABLE_OPENCLAW=false
+            ENABLE_COMFYUI=false
             ;;
         3)
             signal "Acknowledged."
@@ -400,6 +423,18 @@ show_install_menu() {
             ENABLE_WORKFLOWS=true
             ENABLE_RAG=true
             ENABLE_OPENCLAW=true
+            ENABLE_COMFYUI=true
+
+            # Disable image generation on low-tier systems (insufficient RAM/VRAM)
+            # ComfyUI requires shm_size 8GB + 24GB memory limit
+            case "${TIER:-}" in
+                0|1)
+                    ENABLE_COMFYUI=false
+                    log "ComfyUI auto-disabled for Tier $TIER (insufficient RAM/VRAM)"
+                    ai_warn "Image generation (ComfyUI) disabled — your hardware doesn't have enough RAM."
+                    ai "  You can enable it later with: dream enable comfyui"
+                    ;;
+            esac
             ;;
     esac
 }

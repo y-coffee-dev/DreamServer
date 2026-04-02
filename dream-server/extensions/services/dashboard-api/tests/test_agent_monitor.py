@@ -170,3 +170,136 @@ class TestFetchTokenSpyMetrics:
 
         assert agent_monitor.agent_metrics.session_count == 5  # unchanged
         assert len(agent_monitor.throughput.data_points) == 0
+
+    @pytest.mark.asyncio
+    async def test_timeout_error_degrades_gracefully(self, monkeypatch):
+        """When Token Spy times out, metrics are unchanged."""
+        import asyncio
+        monkeypatch.setattr(agent_monitor, "TOKEN_SPY_URL", "http://token-spy:8080")
+        monkeypatch.setattr(agent_monitor, "TOKEN_SPY_API_KEY", "")
+
+        mock_session_cm = MagicMock()
+        mock_session_cm.__aenter__ = AsyncMock(side_effect=asyncio.TimeoutError())
+        mock_session_cm.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("aiohttp.ClientSession", return_value=mock_session_cm):
+            await agent_monitor._fetch_token_spy_metrics()
+
+    @pytest.mark.asyncio
+    async def test_content_type_error_handled(self, monkeypatch):
+        """When Token Spy returns unexpected content type, no exception raised."""
+        monkeypatch.setattr(agent_monitor, "TOKEN_SPY_URL", "http://token-spy:8080")
+        monkeypatch.setattr(agent_monitor, "TOKEN_SPY_API_KEY", "")
+
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+        mock_resp.json = AsyncMock(side_effect=aiohttp.ContentTypeError(
+            MagicMock(), MagicMock(), message="bad content"
+        ))
+
+        mock_get_cm = MagicMock()
+        mock_get_cm.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_get_cm.__aexit__ = AsyncMock(return_value=False)
+
+        mock_http = MagicMock()
+        mock_http.get.return_value = mock_get_cm
+
+        mock_session_cm = MagicMock()
+        mock_session_cm.__aenter__ = AsyncMock(return_value=mock_http)
+        mock_session_cm.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("aiohttp.ClientSession", return_value=mock_session_cm):
+            await agent_monitor._fetch_token_spy_metrics()
+
+
+class TestClusterStatusRefresh:
+
+    @pytest.mark.asyncio
+    async def test_refresh_success(self):
+        """ClusterStatus.refresh parses valid JSON response."""
+        cs = ClusterStatus()
+
+        async def _fake_subprocess(*args, **kwargs):
+            proc = MagicMock()
+            proc.communicate = AsyncMock(return_value=(
+                b'{"nodes": [{"id": "n1", "healthy": true}, {"id": "n2", "healthy": false}]}',
+                b""
+            ))
+            proc.returncode = 0
+            return proc
+
+        with patch("asyncio.create_subprocess_exec", side_effect=_fake_subprocess):
+            await cs.refresh()
+
+        assert cs.total_gpus == 2
+        assert cs.active_gpus == 1
+        assert cs.failover_ready is False
+
+    @pytest.mark.asyncio
+    async def test_refresh_file_not_found(self):
+        """ClusterStatus.refresh handles missing curl."""
+        cs = ClusterStatus()
+
+        with patch("asyncio.create_subprocess_exec", side_effect=FileNotFoundError("curl")):
+            await cs.refresh()
+
+        assert cs.total_gpus == 0
+
+    @pytest.mark.asyncio
+    async def test_refresh_timeout(self):
+        """ClusterStatus.refresh handles timeout."""
+        import asyncio as _asyncio
+        cs = ClusterStatus()
+
+        async def _fake_subprocess(*args, **kwargs):
+            proc = MagicMock()
+            proc.communicate = AsyncMock(side_effect=_asyncio.TimeoutError())
+            proc.kill = MagicMock()
+            proc.wait = AsyncMock()
+            _fake_subprocess.proc = proc
+            return proc
+
+        with patch("asyncio.create_subprocess_exec", side_effect=_fake_subprocess):
+            await cs.refresh()
+
+        assert cs.total_gpus == 0
+        _fake_subprocess.proc.kill.assert_called_once()
+        _fake_subprocess.proc.wait.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_refresh_os_error(self):
+        """ClusterStatus.refresh handles OSError."""
+        cs = ClusterStatus()
+
+        with patch("asyncio.create_subprocess_exec", side_effect=OSError("broken")):
+            await cs.refresh()
+
+        assert cs.total_gpus == 0
+
+    @pytest.mark.asyncio
+    async def test_refresh_invalid_json(self):
+        """ClusterStatus.refresh handles invalid JSON."""
+        cs = ClusterStatus()
+
+        async def _fake_subprocess(*args, **kwargs):
+            proc = MagicMock()
+            proc.communicate = AsyncMock(return_value=(b"not json{", b""))
+            proc.returncode = 0
+            return proc
+
+        with patch("asyncio.create_subprocess_exec", side_effect=_fake_subprocess):
+            await cs.refresh()
+
+        assert cs.total_gpus == 0
+
+
+class TestGetFullAgentMetrics:
+
+    def test_returns_full_dict(self):
+        """get_full_agent_metrics returns correct structure."""
+        from agent_monitor import get_full_agent_metrics
+        result = get_full_agent_metrics()
+        assert "timestamp" in result
+        assert "agent" in result
+        assert "cluster" in result
+        assert "throughput" in result

@@ -37,9 +37,11 @@ Known-good version baselines: [`docs/KNOWN-GOOD-VERSIONS.md`](docs/KNOWN-GOOD-VE
 
 ## 5-Minute Quickstart (Linux)
 
+> **Prerequisites:** `curl` and `jq` must be installed. The installer will auto-install `jq` if missing, but `curl` is required to fetch the installer itself.
+
 ```bash
 # One-line install (Linux — NVIDIA or AMD)
-curl -fsSL https://raw.githubusercontent.com/Light-Heart-Labs/DreamServer/v2.1.0/get-dream-server.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Light-Heart-Labs/DreamServer/v2.4.0/get-dream-server.sh | bash
 ```
 
 Or manually:
@@ -121,7 +123,7 @@ The installer **automatically detects your GPU** and selects the right configura
 
 Both tiers use `qwen2.5:7b` as a bootstrap model for instant startup. The full model downloads in the background via GGUF from HuggingFace.
 
-**Inference backend:** llama-server via ROCm 7.2 (Docker image: `kyuz0/amd-strix-halo-toolboxes:rocm-7.2`)
+**Inference backend:** Lemonade Server via ROCm (Docker image: `ghcr.io/lemonade-sdk/lemonade-server:v10.0.0`)
 
 ### NVIDIA (Discrete GPU)
 
@@ -137,9 +139,9 @@ Both tiers use `qwen2.5:7b` as a bootstrap model for instant startup. The full m
 
 | Tier | Unified RAM | Model | Quant | Context | Example Hardware |
 |------|-------------|-------|-------|---------|-----------------|
-| 1 (Entry) | 8–24GB | qwen3-4b | GGUF Q4_K_M | 16K | M1/M2 base, M4 Mac Mini (16GB) |
-| 2 (Prosumer) | 32GB | qwen3-8b | GGUF Q4_K_M | 32K | M4 Pro Mac Mini, M3 Max MacBook Pro |
-| 3 (Pro) | 48GB | qwen3-30b-a3b (30B MoE) | GGUF Q4_K_M | 32K | M4 Pro (48GB), M2 Max (48GB) |
+| 1 (Entry) | 8–24GB | qwen3.5-9b | GGUF Q4_K_M | 16K | M1/M2 base, M4 Mac Mini (16GB) |
+| 2 (Prosumer) | 32GB | qwen3.5-9b | GGUF Q4_K_M | 32K | M4 Pro Mac Mini, M3 Max MacBook Pro |
+| 3 (Pro) | 48GB | qwen3-30b-a3b | GGUF Q4_K_M | 32K | M4 Pro (48GB), M2 Max (48GB) |
 | 4 (Enterprise) | 64GB+ | qwen3-30b-a3b (30B MoE) | GGUF Q4_K_M | 131K | M2 Ultra Mac Studio, M4 Max (64GB+) |
 
 Override with: `./install.sh --tier 3`
@@ -391,13 +393,17 @@ Dream Server exists because of the incredible people, projects, and communities 
 
 Thanks to [kyuz0](https://github.com/kyuz0) for [amd-strix-halo-toolboxes](https://github.com/kyuz0/amd-strix-halo-toolboxes) — pre-built ROCm containers for Strix Halo that saved us from having to build our own. And to [lhl](https://github.com/lhl) for [strix-halo-testing](https://github.com/lhl/strix-halo-testing) — the foundational Strix Halo AI research and rocWMMA performance work that the broader community builds on.
 
+### Community Builds
+
+*   [halo-ai (bong-water-water-bong)](https://github.com/bong-water-water-bong/halo-ai) — Bare-metal DreamServer rebuild for Strix Halo on Arch Linux. Zero containers, compiled from source, 89 tok/s. Proved Vulkan > ROCm for generation on gfx1151 and contributed kernel tuning research back to the ecosystem. Early DreamServer advocate who introduced us to the Lemonade SDK community and AMD developer team.
+
 ### Projects that make Dream Server possible
 
 *   [llama.cpp (ggerganov)](https://github.com/ggml-org/llama.cpp) — LLM inference engine
 *   [Qwen (Alibaba Cloud)](https://github.com/QwenLM/Qwen) — Default language models
 *   [Open WebUI](https://github.com/open-webui/open-webui) — Chat interface
 *   [ComfyUI](https://github.com/comfyanonymous/ComfyUI) — Image generation engine
-*   [FLUX.1 (Black Forest Labs)](https://github.com/black-forest-labs/flux) — Image generation model
+*   [SDXL Lightning (ByteDance)](https://huggingface.co/ByteDance/SDXL-Lightning) — Image generation model
 *   [AMD ROCm](https://github.com/ROCm/ROCm) — GPU compute platform
 *   [AMD Strix Halo Toolboxes (kyuz0)](https://github.com/kyuz0/amd-strix-halo-toolboxes) — Pre-built ROCm containers for AMD inference
 *   [Strix Halo Testing (lhl)](https://github.com/lhl/strix-halo-testing) — Foundational Strix Halo AI research and rocWMMA optimizations
@@ -412,13 +418,7 @@ Thanks to [kyuz0](https://github.com/kyuz0) for [amd-strix-halo-toolboxes](https
 
 ### Community Contributors
 
-*   [Yasin Bursali (yasinBursali)](https://github.com/yasinBursali) — Fixed CI workflow discovery, added dashboard-api router test coverage with security-focused tests (auth enforcement, path traversal protection), documented all 14 undocumented extension services, fixed macOS disk space preflight to check the correct volume for external drive installs, moved embeddings platform override to prevent orphaned service errors when RAG is disabled, fixed macOS portability issues restoring broken Apple Silicon Neural Engine detection (GNU date/grep to POSIX), fixed docker compose failure diagnostic unreachable under pipefail, added stderr warning on manifest parse failure in compose resolver, fixed socket FD leak in dashboard-api, and added open-webui health gate to prevent 502 errors during model warmup
-*   [latentcollapse (Matt C)](https://github.com/latentcollapse) — Security audit and hardening: OpenClaw localhost binding fix, multi-GPU VRAM detection, AMD dashboard hardening, and the Agent Policy Engine (APE) extension
-*   [Igor Lins e Silva (igorls)](https://github.com/igorls) — Stability audit fixing 9 infrastructure bugs: dynamic compose discovery in backup/restore/update scripts, Token Spy persistent storage and connection pool hardening, dotglob rollback fix, and systemd auto-resume service correction
-*   [Nino Skopac (NinoSkopac)](https://github.com/NinoSkopac) — Token Spy dashboard improvements: shared metric normalization with parity tests, budget and active session tracking, configurable secure CORS replacing wildcard origins, and DB backend compatibility shim for sidecar migration
-*   [Glexy (fullstackdev0110)](https://github.com/fullstackdev0110) — Fixed dream-cli chat port initialization bug, hardened validate.sh environment variable handling with safer quoting and .env parsing, removed all `eval` usage from installer/preflight env parsing and added a safe-env loader (`lib/safe-env.sh`) to prevent shell injection
-*   [bugman-007](https://github.com/bugman-007) — Parallelized health checks in dream status for 5–10× speedup using async gather with proper timeout handling, benchmark and test scripts, integrated backup/restore commands into dream-cli, and added preset import/export with path traversal protection and archive validation
-*   [norfrt6-lab](https://github.com/norfrt6-lab) — Replaced 12+ silent exception-swallowing patterns with specific exception types and proper logging, added cross-platform system metrics (macOS/Windows) for uptime, CPU, and RAM, plus Apple Silicon GPU detection via sysctl/vm_stat
+For the full contributor list with detailed credits, see the [Wall of Heroes](../../README.md#wall-of-heroes) in the root README.
 
 If we missed anyone, [open an issue](https://github.com/Light-Heart-Labs/DreamServer/issues). We want to get this right.
 

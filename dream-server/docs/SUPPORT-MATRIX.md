@@ -38,11 +38,11 @@ Last updated: 2026-03-17
 | `SH_LARGE` | AMD Strix Halo 90+ | Qwen3-Coder-Next | ≥ 90 GB (unified) | ROCm |
 | `SH_COMPACT` | AMD Strix Halo < 90 GB | Qwen3 30B A3B | < 90 GB (unified) | ROCm |
 | `4` | NVIDIA 40 GB+ / multi-GPU | Qwen3 30B A3B | ≥ 40 GB | CUDA |
-| `3` | NVIDIA 20 GB+ | Qwen3 14B | ≥ 20 GB | CUDA |
-| `ARC` | **Intel Arc ≥ 12 GB** (A770, B580) | Qwen3 8B | ≥ 12 GB | **SYCL** |
-| `2` | NVIDIA 12 GB+ | Qwen3 8B | ≥ 12 GB | CUDA |
-| `ARC_LITE` | **Intel Arc < 12 GB** (A750, A380) | Qwen3 4B | 6–11 GB | **SYCL** |
-| `1` | NVIDIA 4 GB+ | Qwen3 8B | ≥ 4 GB | CUDA |
+| `3` | NVIDIA 20 GB+ | Qwen3 30B-A3B | ≥ 20 GB | CUDA |
+| `ARC` | **Intel Arc ≥ 12 GB** (A770, B580) | Qwen3.5 9B | ≥ 12 GB | **SYCL** |
+| `2` | NVIDIA 12 GB+ | Qwen3.5 9B | ≥ 12 GB | CUDA |
+| `ARC_LITE` | **Intel Arc < 12 GB** (A750, A380) | Qwen3.5 4B | 6–11 GB | **SYCL** |
+| `1` | NVIDIA 4 GB+ | Qwen3.5 9B | ≥ 4 GB | CUDA |
 | `0` | CPU / < 4 GB GPU | Qwen3.5 2B | any | CPU |
 | `CLOUD` | No local GPU | Claude (API) | — | LiteLLM |
 
@@ -74,3 +74,7 @@ Last updated: 2026-03-17
 3. Promote macOS from Tier B to Tier A after broader real-hardware validation.
 4. Validate Intel Arc B580 (Battlemage 12 GB) on the `ARC` tier.
 5. Promote Intel Arc from Tier C to Tier B after A770 + B580 real-hardware validation.
+
+## See also
+
+- [LINUX-PORTABILITY.md](LINUX-PORTABILITY.md) — Linux installer edge cases, `.env` validation, extension manifests.

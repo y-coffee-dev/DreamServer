@@ -9,6 +9,7 @@ import time
 import httpx
 import secrets
 import hashlib
+from typing import Optional
 from fastapi import FastAPI, Request, Response, Depends, HTTPException, Security
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -92,31 +93,39 @@ def get_session(request: Request) -> CachedPrivacyShield:
 
 
 @app.get("/health")
-async def health():
-    """Health check endpoint."""
-    return {
+async def health(credentials: Optional[HTTPAuthorizationCredentials] = Security(security_scheme, auto_error=False)):
+    """Health check endpoint. Sensitive fields require authentication."""
+    base = {
         "status": "ok",
         "service": "api-privacy-shield",
         "version": "0.2.0",
-        "target_api": TARGET_API_BASE,
-        "cache_enabled": CACHE_ENABLED,
-        "active_sessions": len(sessions)
     }
+    if credentials and secrets.compare_digest(credentials.credentials, SHIELD_API_KEY):
+        base.update({
+            "target_api": TARGET_API_BASE,
+            "cache_enabled": CACHE_ENABLED,
+            "active_sessions": len(sessions),
+        })
+    return base
 
 
 @app.get("/stats")
-async def stats():
-    """Session statistics."""
-    total_pii = sum(
-        s.detector.get_stats()['unique_pii_count']
-        for s in sessions.values()
-    )
-    return {
-        "active_sessions": len(sessions),
-        "total_pii_scrubbed": total_pii,
+async def stats(credentials: Optional[HTTPAuthorizationCredentials] = Security(security_scheme, auto_error=False)):
+    """Session statistics. Sensitive metrics require authentication."""
+    base = {
         "cache_enabled": CACHE_ENABLED,
-        "cache_size": CACHE_SIZE
+        "cache_size": CACHE_SIZE,
     }
+    if credentials and secrets.compare_digest(credentials.credentials, SHIELD_API_KEY):
+        total_pii = sum(
+            s.detector.get_stats()['unique_pii_count']
+            for s in sessions.values()
+        )
+        base.update({
+            "active_sessions": len(sessions),
+            "total_pii_scrubbed": total_pii,
+        })
+    return base
 
 
 @app.post("/{path:path}", dependencies=[Depends(verify_api_key)])

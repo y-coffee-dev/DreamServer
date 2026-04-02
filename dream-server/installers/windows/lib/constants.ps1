@@ -10,7 +10,7 @@
 #   Change DS_VERSION for custom builds. Must match constants.sh VERSION.
 # ============================================================================
 
-$script:DS_VERSION = "2.0.0-strix-halo"
+$script:DS_VERSION = "2.4.0"
 
 # Install location (override via $env:DREAM_HOME)
 # NOTE: $(if ...) syntax required for PS 5.1 compatibility (bare if-as-expression is PS 7+ only)
@@ -20,13 +20,25 @@ $script:DS_INSTALL_DIR = $(if ($env:DREAM_HOME) { $env:DREAM_HOME } else { Join-
 $script:DS_LOG_FILE = Join-Path $env:TEMP "dream-server-install.log"
 $script:DS_PREFLIGHT_REPORT = Join-Path $env:TEMP "dream-server-windows-preflight.json"
 
-# Native llama-server paths (AMD Strix Halo Vulkan path only)
+# Native inference server paths (AMD path)
+# PID file is shared -- only one native inference server runs at a time
+$script:INFERENCE_PID_FILE = Join-Path (Join-Path $script:DS_INSTALL_DIR "data") "llama-server.pid"
+
+# AMD Lemonade (preferred AMD backend: Vulkan + NPU + ROCm)
+$script:LEMONADE_VERSION     = "10.0.0"
+$script:LEMONADE_MSI_FILE    = "lemonade-server-minimal.msi"
+$script:LEMONADE_MSI_URL     = "https://github.com/lemonade-sdk/lemonade/releases/download/v$($script:LEMONADE_VERSION)/$($script:LEMONADE_MSI_FILE)"
+# NOTE: ALLUSERS=1 installs to "Program Files\Lemonade Server" (with space)
+$script:LEMONADE_INSTALL_DIR = Join-Path $env:ProgramFiles "Lemonade Server"
+$script:LEMONADE_EXE         = Join-Path (Join-Path $script:LEMONADE_INSTALL_DIR "bin") "lemonade-server.exe"
+$script:LEMONADE_PORT        = 8080
+$script:LEMONADE_API_KEY     = "lemonade"
+$script:LEMONADE_HEALTH_URL  = "http://localhost:8080/api/v1/health"
+
+# llama-server fallback (Vulkan build, used if Lemonade install is declined/fails)
 $script:LLAMA_SERVER_DIR = Join-Path $script:DS_INSTALL_DIR "llama-server"
 $script:LLAMA_SERVER_EXE = Join-Path $script:LLAMA_SERVER_DIR "llama-server.exe"
-$script:LLAMA_SERVER_PID_FILE = Join-Path (Join-Path $script:DS_INSTALL_DIR "data") "llama-server.pid"
-
-# llama.cpp release for Vulkan build (update when new releases ship)
-$script:LLAMA_CPP_RELEASE_TAG = "b5570"
+$script:LLAMA_CPP_RELEASE_TAG = "b8248"
 $script:LLAMA_CPP_VULKAN_ASSET = "llama-$($script:LLAMA_CPP_RELEASE_TAG)-bin-win-vulkan-x64.zip"
 $script:LLAMA_CPP_VULKAN_URL = "https://github.com/ggml-org/llama.cpp/releases/download/$($script:LLAMA_CPP_RELEASE_TAG)/$($script:LLAMA_CPP_VULKAN_ASSET)"
 

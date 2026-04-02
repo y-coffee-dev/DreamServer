@@ -28,6 +28,9 @@ jobs:
           python3 scripts/audit-extensions.py --project-dir .
           bash tests/test-extension-audit.sh
 
+      - name: Extension Runtime Check Tests
+        run: bash tests/test-extension-runtime-check.sh
+
       - name: Phase C P1 Static Checks
         run: bash tests/test-phase-c-p1.sh
 

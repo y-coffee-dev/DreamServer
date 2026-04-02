@@ -11,12 +11,14 @@
 #           LLM_MODEL, MAX_CONTEXT, GGUF_FILE, COMPOSE_FLAGS,
 #           ENABLE_VOICE, ENABLE_WORKFLOWS, ENABLE_RAG, ENABLE_OPENCLAW,
 #           OPENCLAW_CONFIG, OPENCLAW_PROVIDER_NAME_DEFAULT,
-#           OPENCLAW_PROVIDER_URL_DEFAULT,
+#           OPENCLAW_PROVIDER_URL_DEFAULT, GPU_ASSIGNMENT_JSON,
+#           COMFYUI_GPU_UUID, WHISPER_GPU_UUID, EMBEDDINGS_GPU_UUID,
+#           LLAMA_SERVER_GPU_UUIDS, LLAMA_ARG_SPLIT_MODE, LLAMA_ARG_TENSOR_SPLIT,
 #           chapter(), ai(), ai_ok(), ai_warn(), log(), warn(), error()
 # Provides: WEBUI_SECRET, N8N_PASS, LITELLM_KEY, LIVEKIT_SECRET,
 #           DASHBOARD_API_KEY, OPENCODE_SERVER_PASSWORD, OPENCLAW_TOKEN,
 #           OPENCLAW_PROVIDER_NAME, OPENCLAW_PROVIDER_URL, OPENCLAW_MODEL,
-#           OPENCLAW_CONTEXT
+#           OPENCLAW_CONTEXT, GPU_ASSIGNMENT_JSON_B64 (in .env)
 #
 # Modder notes:
 #   This is the largest phase. Modify .env generation, add new config files,
@@ -54,12 +56,28 @@ else
         fi
     done
 
+    # Ensure we can write to config/data subtrees (rsync will fail otherwise)
+    if [[ "$SCRIPT_DIR" != "$INSTALL_DIR" ]]; then
+        _cant_write=""
+        for _root in config data; do
+            [[ -d "$INSTALL_DIR/$_root" ]] || continue
+            for _d in "$INSTALL_DIR/$_root"/*/; do
+                [[ -d "$_d" ]] && ! [[ -w "$_d" ]] && _cant_write="$_cant_write ${_d#$INSTALL_DIR/}"
+            done
+        done
+        if [[ -n "$_cant_write" ]]; then
+            error "Cannot write to directories (likely container-owned):$_cant_write
+
+Fix with: sudo chown -R \$(id -u):\$(id -g) $INSTALL_DIR/config $INSTALL_DIR/data — then re-run the installer."
+        fi
+    fi
+
     # Copy entire source tree to install dir (skip if same directory)
     dream_progress 39 "directories" "Copying source files"
     if [[ "$SCRIPT_DIR" != "$INSTALL_DIR" ]]; then
         ai "Copying source files to $INSTALL_DIR..."
         if command -v rsync &>/dev/null; then
-            rsync -a \
+            rsync -a --no-owner --no-group \
                 --exclude='.git' \
                 --exclude='data/' \
                 --exclude='logs/' \
@@ -114,12 +132,14 @@ else
 
         # Replace model and provider placeholders to match what the inference backend actually serves
         # Escape sed special chars in variable values to prevent injection
-        _sed_escape() { printf '%s\n' "$1" | sed 's/[&/\]/\\&/g'; }
+        _sed_escape() { printf '%s\n' "$1" | sed 's/[&/\|]/\\&/g'; }
         _oc_model_esc=$(_sed_escape "$OPENCLAW_MODEL")
         _oc_prov_esc=$(_sed_escape "$OPENCLAW_PROVIDER_NAME")
         _sed_i "s|__LLM_MODEL__|${_oc_model_esc}|g" "$INSTALL_DIR/config/openclaw/openclaw.json"
         _sed_i "s|Qwen/Qwen2.5-[^\"]*|${_oc_model_esc}|g" "$INSTALL_DIR/config/openclaw/openclaw.json"
         _sed_i "s|local-ollama|${_oc_prov_esc}|g" "$INSTALL_DIR/config/openclaw/openclaw.json"
+        _oc_key_esc=$(_sed_escape "${LITELLM_KEY:-none}")
+        _sed_i "s|__LITELLM_KEY__|${_oc_key_esc}|g" "$INSTALL_DIR/config/openclaw/openclaw.json"
         log "Installed OpenClaw config: $OPENCLAW_CONFIG -> openclaw.json (model: $OPENCLAW_MODEL)"
         mkdir -p "$INSTALL_DIR/data/openclaw/home/agents/main/sessions"
         # Generate OpenClaw home config with local llama-server provider
@@ -222,7 +242,7 @@ MODELS_EOF
         # Exclude .git and .openclaw dirs — those are runtime/dev artifacts
         if [[ -d "$SCRIPT_DIR/config/openclaw/workspace" ]]; then
             if command -v rsync &>/dev/null; then
-                rsync -a --exclude='.git' --exclude='.openclaw' --exclude='.gitkeep' \
+                rsync -a --no-owner --no-group --exclude='.git' --exclude='.openclaw' --exclude='.gitkeep' \
                     "$SCRIPT_DIR/config/openclaw/workspace/" "$INSTALL_DIR/config/openclaw/workspace/"
             else
                 cp -r "$SCRIPT_DIR/config/openclaw/workspace"/* "$INSTALL_DIR/config/openclaw/workspace/" 2>/dev/null || true
@@ -293,6 +313,12 @@ MODELS_EOF
     ANTHROPIC_API_KEY=$(_env_get ANTHROPIC_API_KEY "${ANTHROPIC_API_KEY:-}")
     OPENAI_API_KEY=$(_env_get OPENAI_API_KEY "${OPENAI_API_KEY:-}")
     TOGETHER_API_KEY=$(_env_get TOGETHER_API_KEY "${TOGETHER_API_KEY:-}")
+    # Base64-encode GPU assignment JSON for safe .env storage
+    if [[ -n "${GPU_ASSIGNMENT_JSON:-}" && "${GPU_ASSIGNMENT_JSON:-}" != "{}" ]]; then
+        GPU_ASSIGNMENT_JSON_B64=$(echo "$GPU_ASSIGNMENT_JSON" | jq -c '.' | base64 -w0)
+    else
+        GPU_ASSIGNMENT_JSON_B64=""
+    fi
 
     # Generate .env file
     cat > "$INSTALL_DIR/.env" << ENV_EOF
@@ -301,16 +327,19 @@ MODELS_EOF
 # Tier: ${TIER} (${TIER_NAME})
 
 #=== Dream Server Version (used by dream-cli update for version-compat checks) ===
-DREAM_VERSION=${VERSION:-2.1.0}
+DREAM_VERSION=${VERSION:-2.4.0}
 
 #=== LLM Backend Mode ===
-DREAM_MODE=${DREAM_MODE:-local}
-LLM_API_URL=$(if [[ "${DREAM_MODE:-local}" == "local" ]]; then echo "http://llama-server:8080"; else echo "http://litellm:4000"; fi)
+DREAM_MODE=$(if [[ "$GPU_BACKEND" == "amd" && "${DREAM_MODE:-local}" == "local" ]]; then echo "lemonade"; else echo "${DREAM_MODE:-local}"; fi)
+LLM_API_URL=$(if [[ "$GPU_BACKEND" == "amd" && "${DREAM_MODE:-local}" == "local" ]]; then echo "http://litellm:4000"; elif [[ "${DREAM_MODE:-local}" == "local" ]]; then echo "http://llama-server:8080"; else echo "http://litellm:4000"; fi)
 
 #=== Cloud API Keys ===
 ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
 OPENAI_API_KEY=${OPENAI_API_KEY:-}
 TOGETHER_API_KEY=${TOGETHER_API_KEY:-}
+
+#=== Service Auth (LiteLLM proxy) ===
+TARGET_API_KEY=not-needed
 
 #=== LLM Settings (llama-server) ===
 LLM_MODEL=${LLM_MODEL}
@@ -347,7 +376,7 @@ OLLAMA_PORT=11434
 WEBUI_PORT=3000
 SEARXNG_PORT=8888
 PERPLEXICA_PORT=3004
-WHISPER_PORT=9000
+WHISPER_PORT=${WHISPER_PORT:-9000}
 TTS_PORT=8880
 N8N_PORT=5678
 QDRANT_PORT=6333
@@ -360,7 +389,7 @@ LANGFUSE_PORT=${LANGFUSE_PORT}
 #=== Security (auto-generated, keep secret!) ===
 WEBUI_SECRET=${WEBUI_SECRET}
 DASHBOARD_API_KEY=${DASHBOARD_API_KEY}
-N8N_USER=admin
+N8N_USER=admin@dreamserver.local
 N8N_PASS=${N8N_PASS}
 LITELLM_KEY=${LITELLM_KEY}
 LIVEKIT_API_KEY=$(_env_get LIVEKIT_API_KEY "$(openssl rand -hex 16 2>/dev/null || head -c 16 /dev/urandom | xxd -p)")
@@ -380,7 +409,6 @@ ENABLE_WEB_SEARCH=true
 WEB_SEARCH_ENGINE=searxng
 
 #=== n8n Settings ===
-N8N_AUTH=true
 N8N_HOST=localhost
 N8N_WEBHOOK_URL=http://localhost:5678
 TIMEZONE=${SYSTEM_TZ:-UTC}
@@ -400,11 +428,64 @@ LANGFUSE_PROJECT_SECRET_KEY=${LANGFUSE_PROJECT_SECRET_KEY}
 LANGFUSE_INIT_PROJECT_ID=${LANGFUSE_INIT_PROJECT_ID}
 LANGFUSE_INIT_USER_EMAIL=${LANGFUSE_INIT_USER_EMAIL}
 LANGFUSE_INIT_USER_PASSWORD=${LANGFUSE_INIT_USER_PASSWORD}
+
+# ── Image Generation ──
+ENABLE_IMAGE_GENERATION=${ENABLE_COMFYUI:-true}
+
+#=== Multi-GPU Settings ===
+GPU_COUNT=${GPU_COUNT:-1}
+GPU_ASSIGNMENT_JSON_B64=${GPU_ASSIGNMENT_JSON_B64:-}
+COMFYUI_GPU_UUID=${COMFYUI_GPU_UUID:-}
+WHISPER_GPU_UUID=${WHISPER_GPU_UUID:-}
+EMBEDDINGS_GPU_UUID=${EMBEDDINGS_GPU_UUID:-}
+LLAMA_SERVER_GPU_UUIDS=${LLAMA_SERVER_GPU_UUIDS:-}
+LLAMA_ARG_SPLIT_MODE=${LLAMA_ARG_SPLIT_MODE:-none}
+LLAMA_ARG_TENSOR_SPLIT=${LLAMA_ARG_TENSOR_SPLIT:-}
+
 ENV_EOF
 
     chmod 600 "$INSTALL_DIR/.env"  # Secure secrets file
     ai_ok "Created $INSTALL_DIR"
     ai_ok "Generated secure secrets in .env (permissions: 600)"
+
+    # Generate LiteLLM config for Lemonade with baked-in model alias.
+    # model_name must be a literal string (os.environ/ not proven for routing keys).
+    # Uses BOOTSTRAP_GGUF_FILE because the full model may still be downloading
+    # when services first start. Background upgrade will update this config later.
+    if [[ "$GPU_BACKEND" == "amd" ]]; then
+        source "$SCRIPT_DIR/installers/lib/bootstrap-model.sh"
+        _lemonade_gguf="${BOOTSTRAP_GGUF_FILE}"
+        mkdir -p "$INSTALL_DIR/config/litellm"
+        cat > "$INSTALL_DIR/config/litellm/lemonade.yaml" << LITELLM_EOF
+model_list:
+  # Tier model alias → bootstrap GGUF (upgraded later by background download)
+  - model_name: "${LLM_MODEL}"
+    litellm_params:
+      model: "openai/extra.${_lemonade_gguf}"
+      api_base: http://llama-server:8080/api/v1
+      api_key: sk-lemonade
+
+  # Bootstrap model alias → same GGUF (services use this after Phase 10 overwrites LLM_MODEL)
+  - model_name: "${BOOTSTRAP_LLM_MODEL}"
+    litellm_params:
+      model: "openai/extra.${_lemonade_gguf}"
+      api_base: http://llama-server:8080/api/v1
+      api_key: sk-lemonade
+
+  - model_name: "*"
+    litellm_params:
+      model: openai/*
+      api_base: http://llama-server:8080/api/v1
+      api_key: sk-lemonade
+
+litellm_settings:
+  drop_params: true
+  set_verbose: false
+  request_timeout: 120
+  stream_timeout: 60
+LITELLM_EOF
+        ai_ok "Generated LiteLLM config for Lemonade (model alias: ${LLM_MODEL})"
+    fi
 
     # Validate generated .env against schema (fails fast on missing/unknown keys).
     dream_progress 41 "directories" "Validating configuration"

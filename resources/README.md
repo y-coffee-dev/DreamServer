@@ -1,8 +1,8 @@
 # DreamServer Resources
 
-Production-tested tools, frameworks, research, and recipes from building a local AI stack. Everything here was built by the Light Heart Labs team (4 AI agents + humans) while developing DreamServer.
+DreamServer is a local-first AI platform — voice agents, tool-calling LLMs, and a full inference stack running on hardware you own. This is everything we built and learned along the way.
 
-**459 files. Zero fluff.**
+**~490 files** · 100% tool-calling success (150 tests) · 20-30 concurrent voice sessions per GPU · 33 service extensions · 32-document agent architecture blueprint
 
 ---
 
@@ -11,6 +11,57 @@ Production-tested tools, frameworks, research, and recipes from building a local
 ### [`multi-agent/`](multi-agent/) — How We Ran a Self-Organizing AI Team
 
 **Start here if you're interested in multi-agent systems.** Complete documentation of the OpenClaw Collective — 4 AI agents that self-organized on consumer GPUs, producing 3,464 commits in 8 days with 10 human commits. Covers architecture, six transferable patterns (deterministic supervision, workspace-as-brain, mission governance, session lifecycle, memory stratification, self-healing infrastructure), the governance files loaded into every agent session, operational lessons from 24/7 production, swarm playbooks with reliability math, and design decisions with full rationale. Framework-agnostic — the patterns apply to any multi-agent setup.
+
+---
+
+### Agent Systems Blueprint — 32 Documents, 14,384 Lines
+
+**A complete, vendor-neutral blueprint for building a production agentic coding tool from scratch.** Extracted as open-source best practices from exhaustive analysis of production agentic systems. Zero proprietary code. Zero vendor-specific terms. Every pattern described in original writing.
+
+> **Start here:** [`AGENT-ARCHITECTURE-OVERVIEW.md`](research/agent-systems/AGENT-ARCHITECTURE-OVERVIEW.md) — the master map with dependency graphs, error boundaries, and end-to-end walkthroughs.
+>
+> **For local AI:** [`AGENT-LOCAL-LLM-ADAPTATION.md`](research/agent-systems/AGENT-LOCAL-LLM-ADAPTATION.md) — bridges all cloud patterns to DreamServer's local stack (llama-server, LiteLLM, GPU VRAM budgeting, tool calling tiers).
+
+#### Reading Order by Layer
+
+Build from the bottom up. Each layer depends on layers below it.
+
+| Layer | # | Document | What It Covers |
+|-------|---|----------|---------------|
+| **1. Security** | 1 | [`AGENT-SECURITY-COMMAND-EXECUTION.md`](research/agent-systems/AGENT-SECURITY-COMMAND-EXECUTION.md) | Multi-layer shell injection prevention, AST parsing, path validation |
+| | 2 | [`AGENT-SECURITY-NETWORK-AND-INJECTION.md`](research/agent-systems/AGENT-SECURITY-NETWORK-AND-INJECTION.md) | SSRF protection, DNS rebinding, Unicode injection defense |
+| **2. Architecture** | 3 | [`AGENT-PERMISSION-SYSTEM-DESIGN.md`](research/agent-systems/AGENT-PERMISSION-SYSTEM-DESIGN.md) | Declarative rule-based permissions, modes, denial tracking |
+| | 4 | [`AGENT-TOOL-ARCHITECTURE.md`](research/agent-systems/AGENT-TOOL-ARCHITECTURE.md) | Unified tool interface, MCP protocol, plugins, skills system |
+| | 5 | [`AGENT-COORDINATION-PATTERNS.md`](research/agent-systems/AGENT-COORDINATION-PATTERNS.md) | Coordinator/worker orchestration, teammates, parallelism |
+| | 6 | [`AGENT-ERROR-HANDLING-AND-HOOKS.md`](research/agent-systems/AGENT-ERROR-HANDLING-AND-HOOKS.md) | Error classification, event-driven hooks, HTTP hook security |
+| **3. Core** | 7 | [`AGENT-SYSTEM-PROMPT-ENGINEERING.md`](research/agent-systems/AGENT-SYSTEM-PROMPT-ENGINEERING.md) | Section-based prompts, caching, injection defense, versioning |
+| | 8 | [`AGENT-CONTEXT-AND-CONVERSATION.md`](research/agent-systems/AGENT-CONTEXT-AND-CONVERSATION.md) | Token budgeting, history management, compaction triggers |
+| | 9 | [`AGENT-LLM-API-INTEGRATION.md`](research/agent-systems/AGENT-LLM-API-INTEGRATION.md) | Streaming, retry, model selection, rate limits, cost tracking |
+| | 10 | [`AGENT-BOOTSTRAP-AND-CONFIGURATION.md`](research/agent-systems/AGENT-BOOTSTRAP-AND-CONFIGURATION.md) | Startup sequence, multi-source config, enterprise polling, migrations |
+| | 11 | [`AGENT-AUTH-AND-SESSION-MANAGEMENT.md`](research/agent-systems/AGENT-AUTH-AND-SESSION-MANAGEMENT.md) | OAuth/PKCE, token refresh, keychain, session persistence, crash recovery |
+| | 12 | [`AGENT-SPECULATION-AND-CACHING.md`](research/agent-systems/AGENT-SPECULATION-AND-CACHING.md) | Optimistic execution, file state overlays, stale-while-refresh |
+| **4. Rendering** | 13 | [`AGENT-TERMINAL-UI-ARCHITECTURE.md`](research/agent-systems/AGENT-TERMINAL-UI-ARCHITECTURE.md) | React reconciler for terminals, double buffering, keyboard, mouse |
+| | 14 | [`AGENT-DIFF-AND-FILE-EDITING.md`](research/agent-systems/AGENT-DIFF-AND-FILE-EDITING.md) | Patch generation, encoding, notebooks, change attribution |
+| | 15 | [`AGENT-IDE-AND-LSP-INTEGRATION.md`](research/agent-systems/AGENT-IDE-AND-LSP-INTEGRATION.md) | Language Server Protocol, passive diagnostics, crash recovery |
+| **5. Operations** | 16 | [`AGENT-WORKTREE-AND-ISOLATION.md`](research/agent-systems/AGENT-WORKTREE-AND-ISOLATION.md) | Git worktrees for parallel agents, symlinks, sparse checkout |
+| | 17 | [`AGENT-FEATURE-DELIVERY.md`](research/agent-systems/AGENT-FEATURE-DELIVERY.md) | Auto-update, kill switch, subscription tiers, contributor safety |
+| **6. Product** | 18 | [`AGENT-MEMORY-AND-CONSOLIDATION.md`](research/agent-systems/AGENT-MEMORY-AND-CONSOLIDATION.md) | Persistent memory, 4 types, auto-dream consolidation, team sync |
+| | 19 | [`AGENT-CONTEXT-COMPACTION-ADVANCED.md`](research/agent-systems/AGENT-CONTEXT-COMPACTION-ADVANCED.md) | Microcompact, session compact, full compact, reactive recovery |
+| | 20 | [`AGENT-TASK-AND-BACKGROUND-EXECUTION.md`](research/agent-systems/AGENT-TASK-AND-BACKGROUND-EXECUTION.md) | Forked agent pattern, 7 task types, cache-safe params |
+| | 21 | [`AGENT-REMOTE-AND-TEAM-COLLABORATION.md`](research/agent-systems/AGENT-REMOTE-AND-TEAM-COLLABORATION.md) | WebSocket sessions, permission routing, teammates, teleportation |
+| | 22 | [`AGENT-ENTERPRISE-AND-POLICY.md`](research/agent-systems/AGENT-ENTERPRISE-AND-POLICY.md) | Managed settings, policy limits, fail-open/closed, settings sync |
+| | 23 | [`AGENT-MESSAGE-PIPELINE.md`](research/agent-systems/AGENT-MESSAGE-PIPELINE.md) | Message types, command queue, priority scheduling, collapsing |
+| | 24 | [`AGENT-MEDIA-AND-ATTACHMENTS.md`](research/agent-systems/AGENT-MEDIA-AND-ATTACHMENTS.md) | Images, PDFs, clipboard, notebooks, ANSI rendering |
+| | 25 | [`AGENT-LIFECYCLE-AND-PROCESS.md`](research/agent-systems/AGENT-LIFECYCLE-AND-PROCESS.md) | Graceful shutdown, cleanup, crash recovery, concurrent sessions |
+| **7. Engine** | 26 | [`AGENT-QUERY-LOOP-AND-STATE-MACHINE.md`](research/agent-systems/AGENT-QUERY-LOOP-AND-STATE-MACHINE.md) | The main loop — 11 recovery transitions, 9 terminal conditions |
+| | 27 | [`AGENT-STREAMING-TOOL-EXECUTION.md`](research/agent-systems/AGENT-STREAMING-TOOL-EXECUTION.md) | Concurrent tool execution, batching, size management |
+| | 28 | [`AGENT-SDK-BRIDGE.md`](research/agent-systems/AGENT-SDK-BRIDGE.md) | Message translation, NDJSON protocol, permission routing |
+| | 29 | [`AGENT-INITIALIZATION-AND-WIRING.md`](research/agent-systems/AGENT-INITIALIZATION-AND-WIRING.md) | 6-stage bootstrap, preflight, fast mode, prefetch ordering |
+| **Meta** | 30 | [`AGENT-ARCHITECTURE-OVERVIEW.md`](research/agent-systems/AGENT-ARCHITECTURE-OVERVIEW.md) | **Master map** — dependency graph, error boundaries, walkthroughs |
+| | 31 | [`AGENT-BUILD-AND-DEPENDENCIES.md`](research/agent-systems/AGENT-BUILD-AND-DEPENDENCIES.md) | Technology stack, project structure, packaging, test pyramid |
+| **Mission** | 32 | [`AGENT-LOCAL-LLM-ADAPTATION.md`](research/agent-systems/AGENT-LOCAL-LLM-ADAPTATION.md) | **DreamServer bridge** — GPU budgeting, tool calling tiers, small models |
+
+---
 
 ### [`products/`](products/) — Deployable Tools (97 files)
 
@@ -32,7 +83,7 @@ Ready-to-run software you can drop into your stack today.
 
 ### [`research/`](research/) — 56 Deep Dives
 
-Technical analysis from real deployments, not theory.
+Technical analysis from real deployments, not theory. *(The 32 agent architecture documents listed above are also in this directory but are covered in their own section.)*
 
 **Hardware & Capacity** — GPU buying guide, VRAM multi-service limits, consumer GPU benchmarks, single-GPU full-stack configs, Mac Mini and Raspberry Pi 5 guides, cluster benchmarks.
 
@@ -44,7 +95,7 @@ Technical analysis from real deployments, not theory.
 
 **Architecture & Market** — Edge AI market trends, competitive landscape, unsolved local AI problems, model hot-swapping, Windows-specific challenges.
 
-### [`cookbooks/`](cookbooks/) — 21 Step-by-Step Recipes
+### [`cookbooks/`](cookbooks/) — 22 Step-by-Step Recipes
 
 | Recipe | What You'll Build |
 |--------|------------------|
@@ -62,9 +113,9 @@ Technical analysis from real deployments, not theory.
 
 GPU temperature monitoring, service health checks, concurrency benchmarks, LiveKit load testing, vLLM proxy with tool calling, voice latency benchmarks, sub-agent spawning framework, and more.
 
-### [`blog/`](blog/) — 10 Draft Articles
+### [`blog/`](blog/) — 8 Draft Articles
 
-Ready-to-polish content: "Why Self-Host AI in 2026", "Dream Server vs Cloud AI", "Running 32B Models on Consumer Hardware", "The Hidden Costs of Cloud AI", "Privacy-First AI", and more.
+Ready-to-polish content: "Dream Server vs Cloud AI", "Running 32B Models on Consumer Hardware", "The Hidden Costs of Cloud AI", "Privacy-First AI", "Sub-Agent Swarms on Local GPUs", and more.
 
 ### [`docs/`](docs/) — Infrastructure Guides
 
@@ -91,6 +142,8 @@ Old compose files, systemd units, and configs from earlier DreamServer iteration
 
 ## Quick Start
 
+**Building an agentic coding tool?** → Start with [`AGENT-ARCHITECTURE-OVERVIEW.md`](research/agent-systems/AGENT-ARCHITECTURE-OVERVIEW.md), then follow the layer-by-layer reading order above. For local LLM deployment, finish with [`AGENT-LOCAL-LLM-ADAPTATION.md`](research/agent-systems/AGENT-LOCAL-LLM-ADAPTATION.md).
+
 **Want to strip PII from your API calls?** → [`products/privacy-shield/`](products/privacy-shield/)
 
 **Building a voice agent?** → [`frameworks/voice-agent/`](frameworks/voice-agent/) + [`cookbooks/07-grace-voice-agent.md`](cookbooks/07-grace-voice-agent.md)
@@ -110,7 +163,8 @@ Old compose files, systemd units, and configs from earlier DreamServer iteration
 This content was extracted from three Light Heart Labs repositories:
 
 - **[GLO](https://github.com/Light-Heart-Labs/GLO)** — Multi-voice agent framework (→ `frameworks/voice-agent/`)
-- **[Android Labs](https://github.com/Light-Heart-Labs/Android-Labs)** — AI agent collective workspace (→ `multi-agent/`, `products/`, `research/`, `cookbooks/`, `tools/`, `blog/`)
+- **[Android Labs](https://github.com/Light-Heart-Labs/Android-Labs)** — Predecessor project where the AI agent collective produced most of this content (→ `multi-agent/`, `products/`, `research/`, `cookbooks/`, `tools/`, `blog/`)
 - **DreamServer development** — Infrastructure and operational tools (→ `docs/`, `legacy/`)
+- **Production agentic systems analysis** — Vendor-neutral architecture extraction (→ 32 `AGENT-*.md` documents)
 
 All content was produced by local AI agents running on consumer GPU hardware as part of DreamServer development.

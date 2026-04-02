@@ -8,7 +8,6 @@ services:
     security_opt:
       - no-new-privileges:true
     environment:
-      - APE_PORT=${APE_PORT:-7890}
       - APE_POLICY_FILE=/config/policy.yaml
       - APE_AUDIT_LOG=/data/ape/audit.jsonl
       - APE_RATE_LIMIT_RPM=${APE_RATE_LIMIT_RPM:-60}
@@ -28,7 +27,7 @@ services:
           cpus: '0.1'
           memory: 64M
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:7890/health"]
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:7890/health')"]
       interval: 30s
       timeout: 5s
       retries: 3

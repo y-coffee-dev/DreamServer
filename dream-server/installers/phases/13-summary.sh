@@ -27,6 +27,13 @@ dream_progress 98 "summary" "Finishing up"
 . "$SCRIPT_DIR/lib/service-registry.sh"
 sr_load
 
+# Resolve port overrides from .env (same as phase 12)
+if [[ -f "$INSTALL_DIR/.env" ]]; then
+    . "$SCRIPT_DIR/lib/safe-env.sh" 2>/dev/null || true
+    load_env_file "$INSTALL_DIR/.env"
+    sr_resolve_ports
+fi
+
 # Get local IP for LAN access
 LOCAL_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "")
 
@@ -50,27 +57,46 @@ if [[ -f "$SCRIPT_DIR/installers/lib/background-tasks.sh" ]]; then
         ai "Checking background tasks..."
         bg_task_summary >> "$LOG_FILE" 2>&1
 
-        # Check FLUX download specifically
-        bg_task_status "flux-download" &>/dev/null
-        flux_status=$?
-        if [[ $flux_status -ne 3 ]]; then
-            case $flux_status in
+        # Check SDXL Lightning download specifically
+        if bg_task_status "sdxl-download" &>/dev/null; then sdxl_status=0; else sdxl_status=$?; fi
+        if [[ $sdxl_status -ne 3 ]]; then
+            case $sdxl_status in
                 0)  # Still running
-                    ai_warn "FLUX model download still in progress"
+                    ai_warn "SDXL Lightning model download still in progress"
                     ai "ComfyUI image generation will be available once download completes"
-                    ai "Check progress: tail -f $INSTALL_DIR/logs/flux-download.log"
+                    ai "Check progress: tail -f $INSTALL_DIR/logs/sdxl-download.log"
                     ;;
                 1)  # Completed
-                    ai_ok "FLUX model download completed"
+                    ai_ok "SDXL Lightning model download completed"
                     ;;
                 2)  # Failed
-                    ai_warn "FLUX model download encountered errors"
-                    ai "Check log: $INSTALL_DIR/logs/flux-download.log"
+                    ai_warn "SDXL Lightning model download encountered errors"
+                    ai "Check log: $INSTALL_DIR/logs/sdxl-download.log"
                     ;;
             esac
         fi
     fi
 fi
+
+# Check bootstrap model upgrade status
+if [[ "${_BOOTSTRAP_ACTIVE:-false}" == "true" ]]; then
+    if bg_task_status "full-model-download" &>/dev/null; then _upgrade_status=0; else _upgrade_status=$?; fi
+    case $_upgrade_status in
+        0)  # Still running
+            echo ""
+            ai_warn "Using bootstrap model ($BOOTSTRAP_LLM_MODEL). Full model ($FULL_LLM_MODEL) downloading..."
+            ai "The model will auto-swap when ready. Check: tail -f $INSTALL_DIR/logs/model-upgrade.log"
+            ;;
+        1)  # Completed
+            ai_ok "Full model ($FULL_LLM_MODEL) downloaded and swapped"
+            ;;
+        2)  # Failed
+            ai_warn "Full model download failed. Currently running bootstrap model ($BOOTSTRAP_LLM_MODEL)"
+            ai "Re-run installer to retry, or check: $INSTALL_DIR/logs/model-upgrade.log"
+            ;;
+    esac
+fi
+
 
 # Additional service info
 bootline
@@ -128,9 +154,23 @@ bootline
 echo ""
 
 if [[ -f "$SCRIPT_DIR/dream-preflight.sh" ]]; then
-    # Wait a moment for services to stabilize
-    sleep 2
-    bash "$SCRIPT_DIR/dream-preflight.sh" || true
+    # Services like APE and Embeddings may still be starting on fresh installs.
+    # Retry up to 3 times with 10s backoff before reporting failures.
+    _preflight_passed=false
+    for _pf_attempt in 1 2 3; do
+        if bash "$SCRIPT_DIR/dream-preflight.sh" 2>>"$LOG_FILE"; then
+            _preflight_passed=true
+            break
+        fi
+        if [[ $_pf_attempt -lt 3 ]]; then
+            ai_warn "Some services still starting (attempt $_pf_attempt/3). Retrying in 10s..."
+            sleep 10
+        fi
+    done
+    if [[ "$_preflight_passed" != "true" ]]; then
+        ai_warn "Preflight did not fully pass. Services may still be starting."
+        ai "  Check with: dream status"
+    fi
 else
     log "Preflight script not found — skipping validation"
 fi
@@ -149,6 +189,18 @@ if [[ -f "$SCRIPT_DIR/scripts/validate-manifests.sh" ]]; then
     fi
 else
     log "Extension validation script not found — skipping extension checks"
+fi
+
+# Non-core extension runtime check (Docker + optional HTTP health; non-blocking)
+echo ""
+bootline
+echo -e "${BGRN}EXTENSION RUNTIME CHECK${NC}"
+bootline
+echo ""
+if [[ -f "$SCRIPT_DIR/scripts/extension-runtime-check.sh" ]]; then
+    bash "$SCRIPT_DIR/scripts/extension-runtime-check.sh" "$INSTALL_DIR" || true
+else
+    log "extension-runtime-check.sh not found — skipping"
 fi
 
 #=============================================================================
@@ -199,6 +251,68 @@ if [[ -f "$HOME/dream-server/completions/dream-cli.bash" ]]; then
 fi
 BASHRC_EOF
             ai_ok "Bash completion enabled for dream-cli"
+        fi
+    fi
+fi
+
+#=============================================================================
+# Symlink dream CLI to PATH
+#=============================================================================
+if ! $DRY_RUN; then
+    if [[ -x "$INSTALL_DIR/dream-cli" ]]; then
+        if ! command -v dream &>/dev/null; then
+            if sudo -n ln -sf "$INSTALL_DIR/dream-cli" /usr/local/bin/dream 2>/dev/null; then
+                ai_ok "dream command installed (try: dream status)"
+            else
+                # Fallback: user-local bin directory (no sudo needed)
+                mkdir -p "$HOME/.local/bin"
+                if ln -sf "$INSTALL_DIR/dream-cli" "$HOME/.local/bin/dream" 2>/dev/null; then
+                    ai_ok "dream command installed to ~/.local/bin/dream"
+                    if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
+                        ai_warn "Add to your shell profile: export PATH=\"\$HOME/.local/bin:\$PATH\""
+                    fi
+                else
+                    ai_warn "Could not create 'dream' command. Add manually:"
+                    ai "  sudo ln -sf $INSTALL_DIR/dream-cli /usr/local/bin/dream"
+                fi
+            fi
+        else
+            ai_ok "dream command already available"
+        fi
+    fi
+fi
+
+#=============================================================================
+# Post-Install Validation
+#=============================================================================
+if ! $DRY_RUN; then
+    # Check Perplexica config was seeded (phase 12 may have failed silently)
+    if docker inspect dream-perplexica &>/dev/null; then
+        _perplexica_status=$(curl -sf --max-time 5 "http://localhost:${SERVICE_PORTS[perplexica]:-3004}/api/config" 2>>"$LOG_FILE" | \
+            "$PYTHON_CMD" -c "import sys,json;d=json.load(sys.stdin);print('ok' if d['values'].get('setupComplete') else 'needed')" 2>>"$LOG_FILE" || echo "skip")
+        if [[ "$_perplexica_status" == "needed" ]]; then
+            ai_warn "Perplexica config incomplete — running auto-setup..."
+            if [[ -x "$INSTALL_DIR/scripts/repair/repair-perplexica.sh" ]]; then
+                bash "$INSTALL_DIR/scripts/repair/repair-perplexica.sh" \
+                    "http://localhost:${SERVICE_PORTS[perplexica]:-3004}" \
+                    "${LLM_MODEL:-qwen3-30b-a3b}" >> "$LOG_FILE" 2>&1 && \
+                    ai_ok "Perplexica configured" || \
+                    ai_warn "Perplexica may need manual config at :${SERVICE_PORTS[perplexica]:-3004}"
+            fi
+        fi
+    fi
+
+    # Check render/video groups for AMD GPU users
+    if [[ "${GPU_BACKEND:-}" == "amd" ]]; then
+        if ! groups 2>/dev/null | grep -qE "\b(render|video)\b"; then
+            echo ""
+            echo -e "${AMB}┌──────────────────────────────────────────────────────────────┐${NC}"
+            echo -e "${AMB}│  AMD GPU: user not in render/video groups                    │${NC}"
+            echo -e "${AMB}│  GPU-accelerated services (ComfyUI, ROCm) may not work.      │${NC}"
+            echo -e "${AMB}│                                                              │${NC}"
+            echo -e "${AMB}│  Fix: sudo usermod -aG render,video \$USER                    │${NC}"
+            echo -e "${AMB}│  Then log out and back in.                                   │${NC}"
+            echo -e "${AMB}└──────────────────────────────────────────────────────────────┘${NC}"
         fi
     fi
 fi

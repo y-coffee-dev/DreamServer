@@ -36,6 +36,7 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $LibDir = Join-Path $ScriptDir "lib"
 . (Join-Path $LibDir "constants.ps1")
 . (Join-Path $LibDir "ui.ps1")
+. (Join-Path $LibDir "compose-diagnostics.ps1")
 . (Join-Path $LibDir "detection.ps1")
 
 # ── Resolve install directory ──
@@ -85,7 +86,9 @@ function Get-ComposeFlags {
     }
 
     # Fallback: detect from available files
-    $flags = @()
+    # --env-file explicit: Docker Compose V2 on Windows may not auto-discover
+    # .env from the project directory when multiple -f flags are used.
+    $flags = @("--env-file", ".env")
     $base = Join-Path $InstallDir "docker-compose.base.yml"
     $nvidia = Join-Path $InstallDir "docker-compose.nvidia.yml"
     $mono = Join-Path $InstallDir "docker-compose.yml"
@@ -135,29 +138,43 @@ function Read-DreamEnv {
     return $result
 }
 
-# ── AMD native llama-server management ──
+# ── AMD native inference server management (Lemonade or llama-server) ──
 
-function Get-NativeLlamaStatus {
+function Get-NativeInferenceBackend {
     <#
     .SYNOPSIS
-        Check if native llama-server is running (AMD Strix Halo path).
-    .OUTPUTS
-        @{ Running; Pid; Healthy }
+        Determine which native inference backend is configured (from .env LLM_BACKEND).
     #>
-    $result = @{ Running = $false; Pid = 0; Healthy = $false }
+    $env = Read-DreamEnv
+    $backend = $env["LLM_BACKEND"]
+    if ($backend -eq "lemonade" -and (Test-Path $script:LEMONADE_EXE)) { return "lemonade" }
+    if (Test-Path $script:LLAMA_SERVER_EXE) { return "llama-server" }
+    return "none"
+}
 
-    if (-not (Test-Path $script:LLAMA_SERVER_PID_FILE)) { return $result }
+function Get-NativeInferenceStatus {
+    <#
+    .SYNOPSIS
+        Check if native inference server is running (AMD path: Lemonade or llama-server).
+    .OUTPUTS
+        @{ Running; Pid; Healthy; Backend }
+    #>
+    $backend = Get-NativeInferenceBackend
+    $result = @{ Running = $false; Pid = 0; Healthy = $false; Backend = $backend }
 
-    $savedPid = [int](Get-Content $script:LLAMA_SERVER_PID_FILE -Raw).Trim()
+    if (-not (Test-Path $script:INFERENCE_PID_FILE)) { return $result }
+
+    $savedPid = [int](Get-Content $script:INFERENCE_PID_FILE -Raw).Trim()
     try {
         $proc = Get-Process -Id $savedPid -ErrorAction SilentlyContinue
         if ($proc -and -not $proc.HasExited) {
             $result.Running = $true
             $result.Pid = $savedPid
 
-            # Health check
+            # Health check (Lemonade uses /api/v1/health, llama-server uses /health)
+            $healthUrl = $(if ($backend -eq "lemonade") { $script:LEMONADE_HEALTH_URL } else { "http://localhost:8080/health" })
             try {
-                $resp = Invoke-WebRequest -Uri "http://localhost:8080/health" `
+                $resp = Invoke-WebRequest -Uri $healthUrl `
                     -TimeoutSec 3 -UseBasicParsing -ErrorAction SilentlyContinue
                 if ($resp.StatusCode -eq 200) {
                     $result.Healthy = $true
@@ -167,95 +184,135 @@ function Get-NativeLlamaStatus {
     } catch { }
 
     # Clean up stale PID file
-    if (-not $result.Running -and (Test-Path $script:LLAMA_SERVER_PID_FILE)) {
-        Remove-Item $script:LLAMA_SERVER_PID_FILE -Force -ErrorAction SilentlyContinue
+    if (-not $result.Running -and (Test-Path $script:INFERENCE_PID_FILE)) {
+        Remove-Item $script:INFERENCE_PID_FILE -Force -ErrorAction SilentlyContinue
     }
 
     return $result
 }
 
-function Start-NativeLlamaServer {
+# Backward-compat alias
+function Get-NativeLlamaStatus { return Get-NativeInferenceStatus }
+
+function Start-NativeInferenceServer {
     <#
     .SYNOPSIS
-        Start native llama-server.exe for AMD Vulkan path.
+        Start native inference server for AMD path (Lemonade or llama-server).
     #>
-    $status = Get-NativeLlamaStatus
+    $status = Get-NativeInferenceStatus
     if ($status.Running) {
-        Write-AISuccess "Native llama-server already running (PID $($status.Pid))"
+        Write-AISuccess "Native $($status.Backend) already running (PID $($status.Pid))"
         return
     }
 
-    if (-not (Test-Path $script:LLAMA_SERVER_EXE)) {
-        Write-AIError "llama-server.exe not found at $($script:LLAMA_SERVER_EXE)"
-        Write-AI "Re-run the installer to download it."
-        return
+    $backend = Get-NativeInferenceBackend
+    $envVars = Read-DreamEnv
+
+    if ($backend -eq "lemonade") {
+        $modelsDir = Join-Path (Join-Path $InstallDir "data") "models"
+        $lemonadeArgs = @(
+            "serve",
+            "--port", "$($script:LEMONADE_PORT)",
+            "--host", "0.0.0.0",
+            "--no-tray",
+            "--llamacpp", "vulkan",
+            "--extra-models-dir", $modelsDir
+        )
+        $pidDir = Split-Path $script:INFERENCE_PID_FILE
+        New-Item -ItemType Directory -Path $pidDir -Force | Out-Null
+
+        $proc = Start-Process -FilePath $script:LEMONADE_EXE `
+            -ArgumentList $lemonadeArgs -WindowStyle Hidden -PassThru
+        Set-Content -Path $script:INFERENCE_PID_FILE -Value $proc.Id
+
+        Write-AISuccess "Lemonade server started (PID $($proc.Id))"
+        Write-AI "Waiting for health..."
+
+        $maxWait = 60; $waited = 0
+        while ($waited -lt $maxWait) {
+            Start-Sleep -Seconds 2; $waited += 2
+            try {
+                $resp = Invoke-WebRequest -Uri $script:LEMONADE_HEALTH_URL `
+                    -TimeoutSec 3 -UseBasicParsing -ErrorAction SilentlyContinue
+                if ($resp.StatusCode -eq 200) {
+                    Write-AISuccess "Lemonade server healthy"
+                    return
+                }
+            } catch { }
+        }
+        Write-AIWarn "Lemonade server may still be starting..."
+    } elseif ($backend -eq "llama-server") {
+        $ggufFile = $envVars["GGUF_FILE"]
+        $ctxSize  = $envVars["CTX_SIZE"]
+        if (-not $ggufFile) { $ggufFile = "Qwen3.5-9B-Q4_K_M.gguf" }
+        if (-not $ctxSize)  { $ctxSize = "16384" }
+
+        $modelPath = Join-Path (Join-Path $InstallDir "data\models") $ggufFile
+        if (-not (Test-Path $modelPath)) {
+            Write-AIError "Model not found: $modelPath"
+            return
+        }
+
+        $llamaArgs = @(
+            "--model", $modelPath,
+            "--host", "0.0.0.0",
+            "--port", "8080",
+            "--n-gpu-layers", "999",
+            "--ctx-size", $ctxSize
+        )
+
+        $pidDir = Split-Path $script:INFERENCE_PID_FILE
+        New-Item -ItemType Directory -Path $pidDir -Force | Out-Null
+
+        $proc = Start-Process -FilePath $script:LLAMA_SERVER_EXE `
+            -ArgumentList $llamaArgs -WindowStyle Hidden -PassThru
+        Set-Content -Path $script:INFERENCE_PID_FILE -Value $proc.Id
+
+        Write-AISuccess "Native llama-server started (PID $($proc.Id))"
+        Write-AI "Waiting for health..."
+
+        $maxWait = 60; $waited = 0
+        while ($waited -lt $maxWait) {
+            Start-Sleep -Seconds 2; $waited += 2
+            try {
+                $resp = Invoke-WebRequest -Uri "http://localhost:8080/health" `
+                    -TimeoutSec 3 -UseBasicParsing -ErrorAction SilentlyContinue
+                if ($resp.StatusCode -eq 200) {
+                    Write-AISuccess "Native llama-server healthy"
+                    return
+                }
+            } catch { }
+        }
+        Write-AIWarn "llama-server may still be loading model..."
+    } else {
+        Write-AIError "No native inference server found. Re-run the installer."
     }
-
-    $env = Read-DreamEnv
-    $ggufFile = $env["GGUF_FILE"]
-    $ctxSize  = $env["CTX_SIZE"]
-    if (-not $ggufFile) { $ggufFile = "Qwen3-8B-Q4_K_M.gguf" }
-    if (-not $ctxSize)  { $ctxSize = "16384" }
-
-    $modelPath = Join-Path (Join-Path $InstallDir "data\models") $ggufFile
-    if (-not (Test-Path $modelPath)) {
-        Write-AIError "Model not found: $modelPath"
-        return
-    }
-
-    $llamaArgs = @(
-        "--model", $modelPath,
-        "--host", "0.0.0.0",
-        "--port", "8080",
-        "--n-gpu-layers", "999",
-        "--ctx-size", $ctxSize
-    )
-
-    $pidDir = Split-Path $script:LLAMA_SERVER_PID_FILE
-    New-Item -ItemType Directory -Path $pidDir -Force | Out-Null
-
-    $proc = Start-Process -FilePath $script:LLAMA_SERVER_EXE `
-        -ArgumentList $llamaArgs -WindowStyle Hidden -PassThru
-    Set-Content -Path $script:LLAMA_SERVER_PID_FILE -Value $proc.Id
-
-    Write-AISuccess "Native llama-server started (PID $($proc.Id))"
-    Write-AI "Waiting for health..."
-
-    $maxWait = 60
-    $waited = 0
-    while ($waited -lt $maxWait) {
-        Start-Sleep -Seconds 2
-        $waited += 2
-        try {
-            $resp = Invoke-WebRequest -Uri "http://localhost:8080/health" `
-                -TimeoutSec 3 -UseBasicParsing -ErrorAction SilentlyContinue
-            if ($resp.StatusCode -eq 200) {
-                Write-AISuccess "Native llama-server healthy"
-                return
-            }
-        } catch { }
-    }
-    Write-AIWarn "llama-server may still be loading model..."
 }
 
-function Stop-NativeLlamaServer {
-    $status = Get-NativeLlamaStatus
+# Backward-compat alias
+function Start-NativeLlamaServer { Start-NativeInferenceServer }
+
+function Stop-NativeInferenceServer {
+    $status = Get-NativeInferenceStatus
     if (-not $status.Running) {
-        Write-AI "Native llama-server not running"
+        Write-AI "Native inference server not running"
         return
     }
 
     try {
         Stop-Process -Id $status.Pid -Force -ErrorAction SilentlyContinue
-        Write-AISuccess "Native llama-server stopped (PID $($status.Pid))"
+        Write-AISuccess "Native $($status.Backend) stopped (PID $($status.Pid))"
     } catch {
         Write-AIWarn "Could not stop PID $($status.Pid): $_"
     }
 
-    if (Test-Path $script:LLAMA_SERVER_PID_FILE) {
-        Remove-Item $script:LLAMA_SERVER_PID_FILE -Force -ErrorAction SilentlyContinue
+    if (Test-Path $script:INFERENCE_PID_FILE) {
+        Remove-Item $script:INFERENCE_PID_FILE -Force -ErrorAction SilentlyContinue
     }
 }
+
+# Backward-compat alias
+function Stop-NativeLlamaServer { Stop-NativeInferenceServer }
 
 # ============================================================================
 # Commands
@@ -270,14 +327,14 @@ function Invoke-Status {
         Write-Host "  Dream Server Status" -ForegroundColor Cyan
         Write-Host ("  " + ("-" * 40)) -ForegroundColor DarkGray
 
-        # Native llama-server status (AMD)
-        if (Test-Path $script:LLAMA_SERVER_PID_FILE) {
-            $nativeStatus = Get-NativeLlamaStatus
+        # Native inference server status (AMD: Lemonade or llama-server)
+        if (Test-Path $script:INFERENCE_PID_FILE) {
+            $nativeStatus = Get-NativeInferenceStatus
             if ($nativeStatus.Running) {
                 $healthStr = $(if ($nativeStatus.Healthy) { "healthy" } else { "loading" })
-                Write-AISuccess "llama-server (native): running PID $($nativeStatus.Pid) ($healthStr)"
+                Write-AISuccess "$($nativeStatus.Backend) (native): running PID $($nativeStatus.Pid) ($healthStr)"
             } else {
-                Write-AIWarn "llama-server (native): not running (stale PID cleaned)"
+                Write-AIWarn "$($nativeStatus.Backend) (native): not running (stale PID cleaned)"
             }
         }
 
@@ -290,8 +347,13 @@ function Invoke-Status {
         Write-Host "  Health Checks" -ForegroundColor Cyan
         Write-Host ("  " + ("-" * 40)) -ForegroundColor DarkGray
 
+        $llmHealthUrl = $(if ((Get-NativeInferenceBackend) -eq "lemonade") {
+            $script:LEMONADE_HEALTH_URL
+        } else {
+            "http://localhost:8080/health"
+        })
         $endpoints = @(
-            @{ Name = "LLM API";    Url = "http://localhost:8080/health" }
+            @{ Name = "LLM API";    Url = $llmHealthUrl }
             @{ Name = "Chat UI";    Url = "http://localhost:3000" }
             @{ Name = "Dashboard";  Url = "http://localhost:3001" }
         )
@@ -341,19 +403,32 @@ function Invoke-Start {
     Test-Install
     Push-Location $InstallDir
     try {
-        # Start native llama-server first (AMD path)
-        if (-not $Service -and (Test-Path $script:LLAMA_SERVER_EXE)) {
-            Start-NativeLlamaServer
+        # Start native inference server first (AMD path: Lemonade or llama-server)
+        if (-not $Service -and ((Get-NativeInferenceBackend) -ne "none")) {
+            Start-NativeInferenceServer
         }
 
         $flags = Get-ComposeFlags
         if ($Service) {
             Write-AI "Starting $Service..."
-            & docker compose @flags up -d $Service
+            $composeExit = Invoke-DreamDockerCompose -InstallDir $InstallDir -ComposeFlags $flags `
+                -ComposeArgs @("up", "-d", $Service)
+            if ($composeExit -ne 0) {
+                Write-AIError "docker compose up failed (exit code: $composeExit)"
+                Write-DreamComposeDiagnostics -InstallDir $InstallDir -ComposeFlags $flags `
+                    -Phase "dream.ps1 start ($Service)"
+                exit 1
+            }
             Write-AISuccess "$Service started"
         } else {
             Write-AI "Starting all services..."
-            & docker compose @flags up -d
+            $composeExit = Invoke-DreamDockerCompose -InstallDir $InstallDir -ComposeFlags $flags `
+                -ComposeArgs @("up", "-d")
+            if ($composeExit -ne 0) {
+                Write-AIError "docker compose up failed (exit code: $composeExit)"
+                Write-DreamComposeDiagnostics -InstallDir $InstallDir -ComposeFlags $flags -Phase "dream.ps1 start (all)"
+                exit 1
+            }
             Write-AISuccess "All services started"
         }
     } finally {
@@ -369,15 +444,28 @@ function Invoke-Stop {
         $flags = Get-ComposeFlags
         if ($Service) {
             Write-AI "Stopping $Service..."
-            & docker compose @flags stop $Service
+            $composeExit = Invoke-DreamDockerCompose -InstallDir $InstallDir -ComposeFlags $flags `
+                -ComposeArgs @("stop", $Service)
+            if ($composeExit -ne 0) {
+                Write-AIError "docker compose stop failed (exit code: $composeExit)"
+                Write-DreamComposeDiagnostics -InstallDir $InstallDir -ComposeFlags $flags `
+                    -Phase "dream.ps1 stop ($Service)"
+                exit 1
+            }
             Write-AISuccess "$Service stopped"
         } else {
             Write-AI "Stopping all services..."
-            & docker compose @flags down
+            $composeExit = Invoke-DreamDockerCompose -InstallDir $InstallDir -ComposeFlags $flags `
+                -ComposeArgs @("down")
+            if ($composeExit -ne 0) {
+                Write-AIError "docker compose down failed (exit code: $composeExit)"
+                Write-DreamComposeDiagnostics -InstallDir $InstallDir -ComposeFlags $flags -Phase "dream.ps1 stop (all)"
+                exit 1
+            }
 
-            # Stop native llama-server (AMD path)
-            if (Test-Path $script:LLAMA_SERVER_PID_FILE) {
-                Stop-NativeLlamaServer
+            # Stop native inference server (AMD path)
+            if (Test-Path $script:INFERENCE_PID_FILE) {
+                Stop-NativeInferenceServer
             }
 
             Write-AISuccess "All services stopped"
@@ -395,16 +483,29 @@ function Invoke-Restart {
         $flags = Get-ComposeFlags
         if ($Service) {
             Write-AI "Restarting $Service..."
-            & docker compose @flags restart $Service
+            $composeExit = Invoke-DreamDockerCompose -InstallDir $InstallDir -ComposeFlags $flags `
+                -ComposeArgs @("restart", $Service)
+            if ($composeExit -ne 0) {
+                Write-AIError "docker compose restart failed (exit code: $composeExit)"
+                Write-DreamComposeDiagnostics -InstallDir $InstallDir -ComposeFlags $flags `
+                    -Phase "dream.ps1 restart ($Service)"
+                exit 1
+            }
             Write-AISuccess "$Service restarted"
         } else {
-            # For AMD, also restart native llama-server
-            if (Test-Path $script:LLAMA_SERVER_PID_FILE) {
-                Stop-NativeLlamaServer
-                Start-NativeLlamaServer
+            # For AMD, also restart native inference server
+            if (Test-Path $script:INFERENCE_PID_FILE) {
+                Stop-NativeInferenceServer
+                Start-NativeInferenceServer
             }
             Write-AI "Restarting all services..."
-            & docker compose @flags restart
+            $composeExit = Invoke-DreamDockerCompose -InstallDir $InstallDir -ComposeFlags $flags `
+                -ComposeArgs @("restart")
+            if ($composeExit -ne 0) {
+                Write-AIError "docker compose restart failed (exit code: $composeExit)"
+                Write-DreamComposeDiagnostics -InstallDir $InstallDir -ComposeFlags $flags -Phase "dream.ps1 restart (all)"
+                exit 1
+            }
             Write-AISuccess "All services restarted"
         }
     } finally {
@@ -472,8 +573,9 @@ function Invoke-Chat {
         )
     } | ConvertTo-Json -Depth 3
 
+    $chatBasePath = $(if ((Get-NativeInferenceBackend) -eq "lemonade") { "/api/v1" } else { "/v1" })
     try {
-        $resp = Invoke-RestMethod -Uri "http://localhost:8080/v1/chat/completions" `
+        $resp = Invoke-RestMethod -Uri "http://localhost:8080${chatBasePath}/chat/completions" `
             -Method POST -Body $body -ContentType "application/json" -TimeoutSec 120
 
         if ($resp.choices -and $resp.choices[0].message) {
@@ -493,9 +595,20 @@ function Invoke-Update {
     try {
         $flags = Get-ComposeFlags
         Write-AI "Pulling latest images..."
-        & docker compose @flags pull
+        $pullExit = Invoke-DreamDockerCompose -InstallDir $InstallDir -ComposeFlags $flags -ComposeArgs @("pull")
+        if ($pullExit -ne 0) {
+            Write-AIError "docker compose pull failed (exit code: $pullExit)"
+            Write-DreamComposeDiagnostics -InstallDir $InstallDir -ComposeFlags $flags -Phase "dream.ps1 update (pull)"
+            exit 1
+        }
         Write-AI "Recreating containers..."
-        & docker compose @flags up -d --force-recreate
+        $upExit = Invoke-DreamDockerCompose -InstallDir $InstallDir -ComposeFlags $flags `
+            -ComposeArgs @("up", "-d", "--force-recreate")
+        if ($upExit -ne 0) {
+            Write-AIError "docker compose up failed (exit code: $upExit)"
+            Write-DreamComposeDiagnostics -InstallDir $InstallDir -ComposeFlags $flags -Phase "dream.ps1 update (up --force-recreate)"
+            exit 1
+        }
         Write-AISuccess "Update complete"
 
         Start-Sleep -Seconds 5

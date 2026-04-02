@@ -108,7 +108,7 @@ export default function Settings() {
   if (loading) {
     return (
       <div className="p-8 flex items-center justify-center h-64">
-        <Loader2 className="animate-spin text-indigo-500" size={32} />
+        <Loader2 className="animate-spin text-theme-accent" size={32} />
       </div>
     )
   }
@@ -117,14 +117,14 @@ export default function Settings() {
     <div className="p-8">
       <div className="mb-8 flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-white">Settings</h1>
-          <p className="text-zinc-400 mt-1">
+          <h1 className="text-2xl font-bold text-theme-text">Settings</h1>
+          <p className="text-theme-text-muted mt-1">
             Configure your Dream Server installation.
           </p>
         </div>
         <button
           onClick={fetchSettings}
-          className="text-sm text-indigo-300 hover:text-indigo-200 flex items-center gap-1.5 transition-colors"
+          className="text-sm text-theme-accent-light hover:text-theme-accent-light flex items-center gap-1.5 transition-colors"
         >
           <RefreshCw size={14} />
           Refresh
@@ -143,7 +143,7 @@ export default function Settings() {
         <div className={`mb-6 rounded-xl border p-4 text-sm flex items-center justify-between ${
           notice.type === 'danger' ? 'border-red-500/20 bg-red-500/10 text-red-200' :
           notice.type === 'warn' ? 'border-yellow-500/20 bg-yellow-500/10 text-yellow-100' :
-          'border-indigo-500/20 bg-indigo-500/10 text-indigo-100'
+          'border-theme-accent/20 bg-theme-accent/10 text-theme-text'
         }`}>
           <span>{notice.text}</span>
           <button onClick={() => setNotice(null)} className="ml-4 opacity-60 hover:opacity-100">×</button>
@@ -164,7 +164,7 @@ export default function Settings() {
         {/* Routing Table */}
         {services.length > 0 && (
           <SettingsSection title="Routing Table" icon={Network}>
-            <p className="text-xs text-zinc-500 mb-3 font-mono">
+            <p className="text-xs text-theme-text-muted mb-3 font-mono">
               host: {typeof window !== 'undefined' ? window.location.hostname : 'localhost'}
             </p>
             <div className="space-y-1">
@@ -172,11 +172,11 @@ export default function Settings() {
                 <div key={svc.name} className="flex items-center justify-between py-1.5">
                   <div className="flex items-center gap-2">
                     <span className={`w-2 h-2 rounded-full ${dotColor(svc.status)}`} />
-                    <span className="text-sm text-zinc-400">{svc.name}</span>
+                    <span className="text-sm text-theme-text-muted">{svc.name}</span>
                   </div>
                   {svc.port ? (
                     <a
-                      className="text-sm text-indigo-300 hover:text-indigo-200 font-mono transition-colors"
+                      className="text-sm text-theme-accent-light hover:text-theme-accent-light font-mono transition-colors"
                       href={`http://${typeof window !== 'undefined' ? window.location.hostname : 'localhost'}:${svc.port}`}
                       target="_blank"
                       rel="noopener noreferrer"
@@ -184,7 +184,7 @@ export default function Settings() {
                       :{svc.port}
                     </a>
                   ) : (
-                    <span className="text-sm text-zinc-600 font-mono">systemd</span>
+                    <span className="text-sm text-theme-text-muted font-mono">systemd</span>
                   )}
                 </div>
               ))}
@@ -197,28 +197,28 @@ export default function Settings() {
           <div className="space-y-4">
             <div>
               <div className="flex items-center justify-between text-sm mb-2">
-                <span className="text-zinc-400">Models</span>
-                <span className="text-white">{storage?.models?.formatted || 'Unknown'}</span>
+                <span className="text-theme-text-muted">Models</span>
+                <span className="text-theme-text">{storage?.models?.formatted || 'Unknown'}</span>
               </div>
-              <div className="h-2 bg-zinc-700 rounded-full overflow-hidden">
-                <div className="h-full bg-indigo-500 rounded-full" style={{ width: `${storage?.models?.percent || 0}%` }} />
+              <div className="h-2 bg-theme-border rounded-full overflow-hidden">
+                <div className="h-full bg-theme-accent rounded-full" style={{ width: `${storage?.models?.percent || 0}%` }} />
               </div>
             </div>
             <div>
               <div className="flex items-center justify-between text-sm mb-2">
-                <span className="text-zinc-400">Vector Database</span>
-                <span className="text-white">{storage?.vector_db?.formatted || 'Unknown'}</span>
+                <span className="text-theme-text-muted">Vector Database</span>
+                <span className="text-theme-text">{storage?.vector_db?.formatted || 'Unknown'}</span>
               </div>
-              <div className="h-2 bg-zinc-700 rounded-full overflow-hidden">
+              <div className="h-2 bg-theme-border rounded-full overflow-hidden">
                 <div className="h-full bg-purple-500 rounded-full" style={{ width: `${storage?.vector_db?.percent || 0}%` }} />
               </div>
             </div>
             <div>
               <div className="flex items-center justify-between text-sm mb-2">
-                <span className="text-zinc-400">Total Data</span>
-                <span className="text-white">{storage?.total_data?.formatted || 'Unknown'}</span>
+                <span className="text-theme-text-muted">Total Data</span>
+                <span className="text-theme-text">{storage?.total_data?.formatted || 'Unknown'}</span>
               </div>
-              <div className="h-2 bg-zinc-700 rounded-full overflow-hidden">
+              <div className="h-2 bg-theme-border rounded-full overflow-hidden">
                 <div className="h-full bg-green-500 rounded-full" style={{ width: `${storage?.total_data?.percent || 0}%` }} />
               </div>
             </div>
@@ -229,12 +229,12 @@ export default function Settings() {
         <SettingsSection title="Updates" icon={RefreshCw}>
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-white">You're up to date</p>
-              <p className="text-sm text-zinc-500">Last checked: just now</p>
+              <p className="text-theme-text">You're up to date</p>
+              <p className="text-sm text-theme-text-muted">Last checked: just now</p>
             </div>
             <button
               onClick={handleCheckUpdates}
-              className="px-4 py-2 bg-zinc-700 hover:bg-zinc-600 text-white rounded-lg text-sm flex items-center gap-2 transition-colors"
+              className="px-4 py-2 bg-theme-border hover:bg-theme-border text-theme-text rounded-lg text-sm flex items-center gap-2 transition-colors"
             >
               <RefreshCw size={16} />
               Check for Updates
@@ -260,10 +260,10 @@ export default function Settings() {
 
 function SettingsSection({ title, icon: Icon, children }) {
   return (
-    <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl">
-      <div className="flex items-center gap-3 p-4 border-b border-zinc-800">
-        <Icon size={20} className="text-zinc-400" />
-        <h2 className="text-lg font-semibold text-white">{title}</h2>
+    <div className="bg-theme-card border border-theme-border rounded-xl">
+      <div className="flex items-center gap-3 p-4 border-b border-theme-border">
+        <Icon size={20} className="text-theme-text-muted" />
+        <h2 className="text-lg font-semibold text-theme-text">{title}</h2>
       </div>
       <div className="p-4">
         {children}
@@ -275,21 +275,21 @@ function SettingsSection({ title, icon: Icon, children }) {
 function InfoRow({ label, value }) {
   return (
     <div className="flex items-center justify-between py-2">
-      <span className="text-sm text-zinc-400">{label}</span>
-      <span className="text-sm text-white font-medium font-mono">{value}</span>
+      <span className="text-sm text-theme-text-muted">{label}</span>
+      <span className="text-sm text-theme-text font-medium font-mono">{value}</span>
     </div>
   )
 }
 
 function ActionButton({ icon: Icon, label, description, variant = 'default', onClick }) {
   const variants = {
-    default: 'hover:bg-zinc-800',
+    default: 'hover:bg-theme-surface-hover',
     warning: 'hover:bg-yellow-500/10',
     danger: 'hover:bg-red-500/10'
   }
 
   const iconColors = {
-    default: 'text-zinc-400',
+    default: 'text-theme-text-muted',
     warning: 'text-yellow-500',
     danger: 'text-red-500'
   }
@@ -301,8 +301,8 @@ function ActionButton({ icon: Icon, label, description, variant = 'default', onC
     >
       <Icon size={20} className={iconColors[variant]} />
       <div className="text-left">
-        <p className="text-sm text-white font-medium">{label}</p>
-        <p className="text-xs text-zinc-500">{description}</p>
+        <p className="text-sm text-theme-text font-medium">{label}</p>
+        <p className="text-xs text-theme-text-muted">{description}</p>
       </div>
     </button>
   )
