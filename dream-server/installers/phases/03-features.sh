@@ -72,6 +72,18 @@ if ! $INTERACTIVE && [[ "$ENABLE_COMFYUI" == "true" ]]; then
     esac
 fi
 
+# Disable ComfyUI compose if image generation is off — prevents
+# resolve-compose-stack.sh from including a compose file whose image
+# was never built/pulled, which would block ALL containers on start.
+if [[ "${ENABLE_COMFYUI:-}" != "true" ]]; then
+    _comfyui_compose="$SCRIPT_DIR/extensions/services/comfyui/compose.yaml"
+    if [[ -f "$_comfyui_compose" ]]; then
+        mv "$_comfyui_compose" "${_comfyui_compose}.disabled"
+        log "ComfyUI compose disabled (image generation not enabled)"
+    fi
+    unset _comfyui_compose
+fi
+
 # All services are core — no profiles needed (compose profiles removed)
 
 # Select tier-appropriate OpenClaw config
