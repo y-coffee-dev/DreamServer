@@ -534,6 +534,7 @@ cmd_logs() {
 cmd_restart() {
     check_install
     cd "$INSTALL_DIR"
+    load_env
 
     local service="${1:-}"
     local flags_str
@@ -556,6 +557,7 @@ cmd_restart() {
 cmd_stop() {
     check_install
     cd "$INSTALL_DIR"
+    load_env
 
     local service="${1:-}"
     local flags_str
@@ -578,6 +580,7 @@ cmd_stop() {
 cmd_start() {
     check_install
     cd "$INSTALL_DIR"
+    load_env
 
     local service="${1:-}"
     local flags_str
