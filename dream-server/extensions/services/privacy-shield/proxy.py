@@ -9,7 +9,6 @@ import time
 import httpx
 import secrets
 import hashlib
-from typing import Optional
 from fastapi import FastAPI, Request, Response, Depends, HTTPException, Security
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
