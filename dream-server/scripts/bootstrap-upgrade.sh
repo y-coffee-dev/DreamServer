@@ -131,8 +131,17 @@ if command -v docker &>/dev/null && docker ps --filter name=dream-llama-server -
         read -ra COMPOSE_ARGS <<< "$(cat "$INSTALL_DIR/.compose-flags")"
     elif [[ -f "$INSTALL_DIR/docker-compose.base.yml" ]]; then
         COMPOSE_ARGS=(-f "$INSTALL_DIR/docker-compose.base.yml")
-        [[ -f "$INSTALL_DIR/docker-compose.nvidia.yml" ]] && COMPOSE_ARGS+=(-f "$INSTALL_DIR/docker-compose.nvidia.yml")
-        [[ -f "$INSTALL_DIR/docker-compose.amd.yml" ]] && COMPOSE_ARGS+=(-f "$INSTALL_DIR/docker-compose.amd.yml")
+        # Read GPU backend from .env to select the correct overlay
+        _gpu_backend=""
+        if [[ -f "$ENV_FILE" ]]; then
+            _gpu_backend=$(grep -E '^GPU_BACKEND=' "$ENV_FILE" | cut -d= -f2)
+        fi
+        case "${_gpu_backend}" in
+            nvidia) [[ -f "$INSTALL_DIR/docker-compose.nvidia.yml" ]] && COMPOSE_ARGS+=(-f "$INSTALL_DIR/docker-compose.nvidia.yml") ;;
+            amd)    [[ -f "$INSTALL_DIR/docker-compose.amd.yml" ]]    && COMPOSE_ARGS+=(-f "$INSTALL_DIR/docker-compose.amd.yml") ;;
+            apple)  [[ -f "$INSTALL_DIR/docker-compose.apple.yml" ]]  && COMPOSE_ARGS+=(-f "$INSTALL_DIR/docker-compose.apple.yml") ;;
+            # cpu or unknown: base only, no GPU overlay
+        esac
     fi
 
     cd "$INSTALL_DIR" || fail "Cannot cd to $INSTALL_DIR"
