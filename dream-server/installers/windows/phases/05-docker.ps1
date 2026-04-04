@@ -114,11 +114,63 @@ if ($dryRun) {
             Write-AISuccess "NVIDIA GPU passthrough confirmed in Docker"
             $script:gpuPassthroughFailed = $false
         } else {
-            Write-AIWarn "NVIDIA GPU passthrough smoke test failed (exit: $gpuTestExit)."
-            Write-AI "  Installer will fall back to CPU-only inference."
-            Write-AI "  To fix GPU passthrough later, restart Docker Desktop and WSL:"
-            Write-AI "  wsl --shutdown && docker run --rm --gpus all nvidia/cuda:12.0-base-ubuntu22.04 nvidia-smi"
-            $script:gpuPassthroughFailed = $true
+            # Attempt automatic recovery before falling back to CPU
+            Write-AIWarn "GPU passthrough test failed. Attempting automatic fix..."
+
+            # Step 1: WSL kernel refresh (fixes post-driver-update staleness)
+            Write-AI "  Restarting WSL2 kernel..."
+            & wsl --shutdown 2>$null
+            Start-Sleep -Seconds 5
+
+            $ErrorActionPreference = "SilentlyContinue"
+            $retryOutput = & docker run --rm --gpus all nvidia/cuda:12.0-base-ubuntu22.04 nvidia-smi 2>&1
+            $retryExit = $LASTEXITCODE
+            $ErrorActionPreference = $prevEAP
+
+            if ($retryExit -eq 0) {
+                Write-AISuccess "GPU passthrough recovered after WSL restart"
+                $script:gpuPassthroughFailed = $false
+            } else {
+                # Step 2: Install NVIDIA Container Toolkit in WSL2
+                Write-AI "  Installing NVIDIA Container Toolkit in WSL2..."
+                $toolkitScript = @'
+set -e
+if command -v nvidia-ctk &>/dev/null; then
+    echo "NVIDIA Container Toolkit already installed"
+    exit 0
+fi
+distribution=$(. /etc/os-release; echo ${ID}${VERSION_ID})
+curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | \
+    sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg 2>/dev/null
+curl -s -L "https://nvidia.github.io/libnvidia-container/${distribution}/libnvidia-container.list" | \
+    sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
+    sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list >/dev/null
+sudo apt-get update -qq
+sudo apt-get install -y -qq nvidia-container-toolkit
+sudo nvidia-ctk runtime configure --runtime=docker
+'@
+                $toolkitScript | & wsl bash 2>&1 | ForEach-Object { Write-Host "    $_" }
+
+                # Restart WSL to pick up the new runtime config
+                & wsl --shutdown 2>$null
+                Start-Sleep -Seconds 5
+
+                # Step 3: Final retry
+                $ErrorActionPreference = "SilentlyContinue"
+                $finalOutput = & docker run --rm --gpus all nvidia/cuda:12.0-base-ubuntu22.04 nvidia-smi 2>&1
+                $finalExit = $LASTEXITCODE
+                $ErrorActionPreference = $prevEAP
+
+                if ($finalExit -eq 0) {
+                    Write-AISuccess "GPU passthrough working after toolkit installation"
+                    $script:gpuPassthroughFailed = $false
+                } else {
+                    Write-AIWarn "GPU passthrough still failing after auto-fix attempts."
+                    Write-AI "  Continuing with CPU-only inference (slower)."
+                    Write-AI "  Manual fix: https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html"
+                    $script:gpuPassthroughFailed = $true
+                }
+            }
         }
     }
 }
