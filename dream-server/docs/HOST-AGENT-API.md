@@ -148,6 +148,6 @@ Protections in place:
 
 ## How the Dashboard API Calls It
 
-The Dashboard API (`extensions/services/dashboard-api/routers/extensions.py`) communicates with the host agent via the `AGENT_URL` environment variable (constructed from `DREAM_AGENT_HOST` and `DREAM_AGENT_PORT` in `config.py`). It uses `DREAM_AGENT_KEY` for authentication. The connection flows through Docker's `host.docker.internal` DNS name by default, allowing the containerized API to reach the host-bound agent.
+The Dashboard API (Rust binary at `extensions/services/dashboard-api/`) communicates with the host agent via the `DREAM_AGENT_URL` environment variable (constructed from `DREAM_AGENT_HOST` and `DREAM_AGENT_PORT`). It uses `DREAM_AGENT_KEY` for authentication. The connection flows through Docker's `host.docker.internal` DNS name by default, allowing the containerized API to reach the host-bound agent.
 
 If the host agent is unreachable, mutation operations (install, enable, disable) still succeed at the file level but return `"restart_required": true` to signal that `dream restart` is needed.

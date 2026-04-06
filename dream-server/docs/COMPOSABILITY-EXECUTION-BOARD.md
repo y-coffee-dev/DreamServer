@@ -134,14 +134,14 @@ Effort: 3-5 days
 Files:
 - `extensions/schema/service-manifest.v1.json` (new)
 - `extensions/services/*.yaml` (new examples)
-- [`dashboard-api/main.py`](../extensions/services/dashboard-api/main.py)
+- [`dashboard-api/crates/dashboard-api/src/config.rs`](../extensions/services/dashboard-api/crates/dashboard-api/src/config.rs)
 Acceptance:
 - API can load service definitions from manifests.
 - Health checks and feature cards reference manifest data, not hardcoded lists.
 Progress notes:
 - Added `extensions/schema/service-manifest.v1.json`.
 - Added example manifests in `extensions/services/` for inference, voice, workflows, vector DB, and image generation services.
-- `dashboard-api/main.py` now loads and merges service/feature definitions from manifests with safe fallback defaults.
+- `dashboard-api` (Rust/Axum rewrite) loads and merges service/feature definitions from manifests with safe fallback defaults.
 
 Milestone W4-M2 (PR-7): Environment schema and validation  
 Status: `IN_PROGRESS`  
@@ -189,7 +189,7 @@ Owner: Frontend + API
 Effort: 2-3 days  
 Files:
 - [`dashboard/src/pages/Dashboard.jsx`](../extensions/services/dashboard/src/pages/Dashboard.jsx)
-- [`dashboard-api/main.py`](../extensions/services/dashboard-api/main.py)
+- [`dashboard-api/crates/dashboard-api/src/main.rs`](../extensions/services/dashboard-api/crates/dashboard-api/src/main.rs)
 Acceptance:
 - Feature tiles derive from API metadata.
 - Ports/URLs are not hardcoded in JSX.
@@ -207,13 +207,13 @@ Owner: API + Docs
 Effort: 1-2 days  
 Files:
 - `config/n8n/catalog.json` (planned; not yet created)
-- [`dashboard-api/main.py`](../extensions/services/dashboard-api/main.py)
+- [`dashboard-api/crates/dashboard-api/src/routes/workflows.rs`](../extensions/services/dashboard-api/crates/dashboard-api/src/routes/workflows.rs)
 - [INTEGRATION-GUIDE.md](INTEGRATION-GUIDE.md)
 Acceptance:
 - One canonical workflow path in code/docs.
 - Catalog supports both templates and metadata cleanly.
 Progress notes:
-- `dashboard-api/main.py` now resolves workflows from canonical `config/n8n` with legacy `workflows/` fallback.
+- `dashboard-api` (Rust) resolves workflows from canonical `config/n8n` with legacy `workflows/` fallback.
 - Workflow catalog loading now validates structure and returns normalized fallback data on malformed input.
 - `docs/INTEGRATION-GUIDE.md` updated to reference `config/n8n/*.json` and `config/n8n/catalog.json`.
 
@@ -285,7 +285,7 @@ Owner: Release
 Effort: 2-3 days  
 Files:
 - `manifest.json` (new)
-- [`dashboard-api/main.py`](../extensions/services/dashboard-api/main.py)
+- [`dashboard-api/crates/dashboard-api/src/main.rs`](../extensions/services/dashboard-api/crates/dashboard-api/src/main.rs)
 - [`dream-update.sh`](../dream-update.sh)
 Acceptance:
 - Update path validates version compatibility and rollback point.

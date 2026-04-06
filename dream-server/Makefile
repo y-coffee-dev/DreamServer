@@ -12,8 +12,8 @@ help: ## Show this help
 lint: ## Syntax check all shell scripts + Python compile check
 	@echo "=== Shell syntax ==="
 	@fail=0; for f in $(SHELL_FILES); do bash -n "$$f" || fail=1; done; [ $$fail -eq 0 ]
-	@echo "=== Python compile ==="
-	@python3 -m py_compile extensions/services/dashboard-api/main.py extensions/services/dashboard-api/agent_monitor.py
+	@echo "=== Dashboard API (Rust) ==="
+	@cd extensions/services/dashboard-api && cargo check --workspace 2>&1 | tail -1
 	@echo "All lint checks passed."
 
 test: ## Run unit and contract tests

@@ -1,0 +1,48 @@
+[package]
+name = "dream-scripts"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "dream_scripts"
+path = "src/lib.rs"
+
+[[bin]]
+name = "dream-scripts"
+path = "src/main.rs"
+
+[[bin]]
+name = "healthcheck"
+path = "src/bin/healthcheck.rs"
+
+[[bin]]
+name = "assign-gpus"
+path = "src/bin/assign_gpus.rs"
+
+[[bin]]
+name = "audit-extensions"
+path = "src/bin/audit_extensions.rs"
+
+[[bin]]
+name = "validate-sim-summary"
+path = "src/bin/validate_sim_summary.rs"
+
+[[bin]]
+name = "validate-models"
+path = "src/bin/validate_models.rs"
+
+[dependencies]
+dream-common = { path = "../dream-common" }
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+anyhow = "1"
+reqwest = { version = "0.12", features = ["json"] }
+tokio = { version = "1", features = ["full"] }
+shellexpand = "3"
+base64 = "0.22"
+
+[dev-dependencies]
+tempfile = "3"
+serde_json = "1"

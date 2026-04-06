@@ -1,10 +1,10 @@
 # dashboard-api
 
-FastAPI backend providing system status, metrics, and management for Dream Server
+Rust/Axum backend providing system status, metrics, and management for Dream Server
 
 ## Overview
 
-The Dashboard API is a Python FastAPI service that powers the Dream Server Dashboard UI. It exposes endpoints for GPU metrics, service health monitoring, LLM inference stats, workflow management, agent monitoring, setup wizard, version checking, and Privacy Shield control.
+The Dashboard API is a Rust service built with Axum that powers the Dream Server Dashboard UI. It exposes endpoints for GPU metrics, service health monitoring, LLM inference stats, workflow management, agent monitoring, setup wizard, version checking, and Privacy Shield control.
 
 It runs at `http://localhost:3002` and is the single backend used by the React dashboard frontend.
 
@@ -21,6 +21,7 @@ It runs at `http://localhost:3002` and is the single backend used by the React d
 - **Privacy Shield control**: Enable/disable container, fetch PII scrubbing statistics
 - **Version checking**: GitHub releases integration for update notifications
 - **Storage reporting**: Breakdown of disk usage by models, vector DB, and total data
+- **Extension management**: Install, enable, disable, uninstall extensions from the portal
 
 ## Configuration
 
@@ -30,6 +31,7 @@ Environment variables (set in `.env`):
 |----------|---------|-------------|
 | `DASHBOARD_API_PORT` | `3002` | External + internal port |
 | `DASHBOARD_API_KEY` | *(auto-generated)* | API key for all protected endpoints. If unset, a random key is generated and written to `/data/dashboard-api-key.txt` |
+| `DREAM_VERSION` | *(from Cargo.toml)* | Dream Server version reported by `/api/version` |
 | `GPU_BACKEND` | `nvidia` | GPU backend: `nvidia` or `amd` |
 | `OLLAMA_URL` | `http://llama-server:8080` | LLM backend URL |
 | `LLM_MODEL` | `qwen3:30b-a3b` | Active model name shown in dashboard |
@@ -75,15 +77,20 @@ Environment variables (set in `.env`):
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | `GET` | `/api/workflows` | Yes | Workflow catalog with install status |
+| `GET` | `/api/workflows/{id}` | Yes | Get a specific workflow template |
 | `POST` | `/api/workflows/{id}/enable` | Yes | Import and activate a workflow in n8n |
-| `DELETE` | `/api/workflows/{id}` | Yes | Remove a workflow from n8n |
+| `POST` | `/api/workflows/{id}/disable` | Yes | Remove a workflow from n8n |
+| `DELETE` | `/api/workflows/{id}` | Yes | Remove a workflow from n8n (alias) |
 | `GET` | `/api/workflows/{id}/executions` | Yes | Recent execution history |
+| `GET` | `/api/workflows/categories` | Yes | Workflow categories from catalog |
+| `GET` | `/api/workflows/n8n/status` | Yes | n8n availability check |
 
 ### Features
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| `GET` | `/api/features` | Yes | Feature status with hardware recommendations |
+| `GET` | `/api/features` | Yes | Feature list from manifests |
+| `GET` | `/api/features/status` | Yes | Feature status with service health |
 | `GET` | `/api/features/{id}/enable` | Yes | Enable instructions for a feature |
 
 ### Setup Wizard
@@ -103,9 +110,10 @@ Environment variables (set in `.env`):
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | `GET` | `/api/agents/metrics` | Yes | Full agent metrics (sessions, tokens, cost) |
-| `GET` | `/api/agents/metrics.html` | Yes | Agent metrics as HTML fragment (htmx) |
 | `GET` | `/api/agents/cluster` | Yes | Cluster health and GPU node status |
 | `GET` | `/api/agents/throughput` | Yes | Throughput stats (tokens/sec) |
+| `GET` | `/api/agents/sessions` | Yes | Active agent sessions |
+| `POST` | `/api/agents/chat` | Yes | Agent chat endpoint |
 
 ### Privacy Shield
 
@@ -120,22 +128,23 @@ Environment variables (set in `.env`):
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | `GET` | `/api/version` | Yes | Current version + GitHub update check |
-| `GET` | `/api/releases/manifest` | No | Recent release history from GitHub |
+| `GET` | `/api/releases/manifest` | Yes | Recent release history from GitHub |
+| `GET` | `/api/update/dry-run` | Yes | Preview update actions |
 | `POST` | `/api/update` | Yes | Trigger update actions (`check`, `backup`, `update`) |
 
 ### Extensions
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| `GET` | `/api/extensions/catalog` | Yes | Browse extension catalog with status, filterable by `category` and `gpu_compatible` query params |
-| `GET` | `/api/extensions/{service_id}` | Yes | Detailed info for a single extension (manifest, features, env vars, setup instructions) |
-| `POST` | `/api/extensions/{service_id}/install` | Yes | Install an extension from the extensions library into user-extensions |
-| `POST` | `/api/extensions/{service_id}/enable` | Yes | Enable a disabled extension (renames `compose.yaml.disabled` to `compose.yaml`, starts container via host agent) |
-| `POST` | `/api/extensions/{service_id}/disable` | Yes | Disable an enabled extension (stops container via host agent, renames `compose.yaml` to `compose.yaml.disabled`) |
-| `DELETE` | `/api/extensions/{service_id}` | Yes | Uninstall a disabled extension (removes its directory from user-extensions) |
-| `POST` | `/api/extensions/{service_id}/logs` | Yes | Fetch container logs via the host agent (last 100 lines) |
+| `GET` | `/api/extensions/catalog` | Yes | Browse extension catalog with status |
+| `GET` | `/api/extensions/{service_id}` | Yes | Detailed info for a single extension |
+| `POST` | `/api/extensions/{service_id}/install` | Yes | Install an extension from the library |
+| `POST` | `/api/extensions/{service_id}/enable` | Yes | Enable a disabled extension |
+| `POST` | `/api/extensions/{service_id}/disable` | Yes | Disable an enabled extension |
+| `DELETE` | `/api/extensions/{service_id}` | Yes | Uninstall a disabled extension |
+| `POST` | `/api/extensions/{service_id}/logs` | Yes | Fetch container logs via the host agent |
 
-Core services cannot be installed, enabled, disabled, or uninstalled via these endpoints (returns 403). The catalog endpoint also reports whether the [host agent](../../docs/HOST-AGENT-API.md) is available (`agent_available` field).
+Core services cannot be installed, enabled, disabled, or uninstalled via these endpoints. The catalog endpoint also reports whether the [host agent](../../docs/HOST-AGENT-API.md) is available.
 
 ## Authentication
 
@@ -152,34 +161,58 @@ When `DASHBOARD_API_KEY` is empty (default), all endpoints are accessible withou
 
 ```
 Dashboard UI (:3001)
-       │
-       ▼
-Dashboard API (:3002)
-  ├── gpu.py ──────────────── nvidia-smi / sysfs AMD
-  ├── helpers.py ──────────── Docker-network health checks
-  ├── agent_monitor.py ─────── Background metrics collection
-  └── routers/
-       ├── workflows.py ────── n8n API integration
-       ├── features.py ─────── Hardware-aware feature discovery
-       ├── setup.py ─────────── Setup wizard + persona system
-       ├── updates.py ──────── GitHub releases + dream-update.sh
-       ├── agents.py ───────── Agent session + throughput metrics
-       ├── privacy.py ──────── Privacy Shield container control
-       └── extensions.py ───── Extension catalog, install, enable/disable, logs
+       |
+       v
+Dashboard API (:3002)  [Rust/Axum binary]
+  |-- gpu.rs --------------- nvidia-smi / sysfs AMD
+  |-- helpers.rs ----------- Docker-network health checks
+  |-- agent_monitor.rs ----- Background metrics collection
+  |-- middleware.rs -------- API key authentication
+  |-- config.rs ------------ Manifest loading + env config
+  +-- routes/
+       |-- workflows.rs ---- n8n API integration
+       |-- features.rs ----- Hardware-aware feature discovery
+       |-- setup.rs -------- Setup wizard + persona system
+       |-- updates.rs ------ GitHub releases + dream-update.sh
+       |-- agents.rs ------- Agent session + throughput metrics
+       |-- privacy.rs ------ Privacy Shield container control
+       |-- extensions.rs --- Extension catalog, install, enable/disable, uninstall
+       |-- services.rs ----- Core service endpoints (gpu, disk, model, status)
+       |-- settings.rs ----- Service tokens, external links, storage
+       |-- preflight.rs ---- Docker/GPU/port/disk preflight checks
+       |-- status.rs ------- Aggregated dashboard status
+       +-- health.rs ------- Health check endpoint
 ```
 
-## Files
+## Workspace Structure
 
-- `main.py` — FastAPI application, core endpoints, startup
-- `config.py` — Shared configuration and manifest loading
-- `models.py` — Pydantic response schemas
-- `security.py` — API key authentication
-- `gpu.py` — GPU detection for NVIDIA and AMD
-- `helpers.py` — Service health checks, LLM metrics, system metrics
-- `agent_monitor.py` — Background agent metrics collection
-- `routers/` — Endpoint modules (workflows, features, setup, updates, agents, privacy, extensions)
-- `Dockerfile` — Container definition
-- `requirements.txt` — Python dependencies
+The API is a Cargo workspace with three crates:
+
+- `crates/dashboard-api/` — Main binary and library (Axum routes, state, middleware)
+- `crates/dream-common/` — Shared types (manifest structs, service config, models)
+- `crates/dream-scripts/` — CLI scripts and utilities
+
+## Building
+
+```bash
+# Development build
+cargo build --workspace
+
+# Release build (used in Docker)
+cargo build --release --workspace
+
+# Run tests
+cargo test --workspace -- --test-threads=1
+
+# Check without building
+cargo check --workspace
+```
+
+## Dockerfile
+
+Multi-stage Rust build producing a minimal (~25 MB) distroless image:
+1. Builder stage: `rust:1-slim` with cargo build --release
+2. Runtime stage: `gcr.io/distroless/cc-debian12` with non-root user
 
 ## Troubleshooting
 

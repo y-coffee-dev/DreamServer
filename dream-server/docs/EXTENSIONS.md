@@ -349,7 +349,7 @@ AMD ROCm requires additional container configuration compared to NVIDIA:
 ## Testing Checklist (PR Gate)
 
 - `bash -n` on changed shell files
-- `python3 -m py_compile dashboard-api/main.py`
+- `cargo check --workspace` (in `extensions/services/dashboard-api/`)
 - `bash tests/integration-test.sh`
 - relevant smoke scripts in `tests/smoke/`
 - if dashboard code changed and Node is available:

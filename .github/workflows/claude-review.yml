@@ -172,7 +172,7 @@ jobs:
             "dream-server/installers/"
             "dream-server/dream-cli"
             "dream-server/config/"
-            "dream-server/extensions/services/dashboard-api/security.py"
+            "dream-server/extensions/services/dashboard-api/crates/dashboard-api/src/middleware.rs"
             ".github/workflows/"
             ".env"
             "docker-compose"
