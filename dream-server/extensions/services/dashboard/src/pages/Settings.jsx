@@ -102,8 +102,8 @@ export default function Settings() {
     degraded: 'bg-yellow-500',
     unhealthy: 'bg-red-500',
     down: 'bg-red-500',
-    unknown: 'bg-zinc-600'
-  }[status] || 'bg-zinc-600')
+    unknown: 'bg-theme-border'
+  }[status] || 'bg-theme-border')
 
   if (loading) {
     return (
@@ -150,7 +150,7 @@ export default function Settings() {
         </div>
       )}
 
-      <div className="max-w-2xl space-y-6">
+      <div className="max-w-2xl space-y-6 liquid-metal-sequence-grid liquid-metal-sequence-grid--services">
         {/* System Identity */}
         <SettingsSection title="System Identity" icon={Server}>
           <div className="grid grid-cols-2 gap-4">
@@ -200,7 +200,7 @@ export default function Settings() {
                 <span className="text-theme-text-muted">Models</span>
                 <span className="text-theme-text">{storage?.models?.formatted || 'Unknown'}</span>
               </div>
-              <div className="h-2 bg-theme-border rounded-full overflow-hidden">
+              <div className="liquid-metal-progress-track h-2 rounded-full overflow-hidden">
                 <div className="h-full bg-theme-accent rounded-full" style={{ width: `${storage?.models?.percent || 0}%` }} />
               </div>
             </div>
@@ -209,7 +209,7 @@ export default function Settings() {
                 <span className="text-theme-text-muted">Vector Database</span>
                 <span className="text-theme-text">{storage?.vector_db?.formatted || 'Unknown'}</span>
               </div>
-              <div className="h-2 bg-theme-border rounded-full overflow-hidden">
+              <div className="liquid-metal-progress-track h-2 rounded-full overflow-hidden">
                 <div className="h-full bg-purple-500 rounded-full" style={{ width: `${storage?.vector_db?.percent || 0}%` }} />
               </div>
             </div>
@@ -218,7 +218,7 @@ export default function Settings() {
                 <span className="text-theme-text-muted">Total Data</span>
                 <span className="text-theme-text">{storage?.total_data?.formatted || 'Unknown'}</span>
               </div>
-              <div className="h-2 bg-theme-border rounded-full overflow-hidden">
+              <div className="liquid-metal-progress-track h-2 rounded-full overflow-hidden">
                 <div className="h-full bg-green-500 rounded-full" style={{ width: `${storage?.total_data?.percent || 0}%` }} />
               </div>
             </div>
@@ -260,7 +260,7 @@ export default function Settings() {
 
 function SettingsSection({ title, icon: Icon, children }) {
   return (
-    <div className="bg-theme-card border border-theme-border rounded-xl">
+    <div className="liquid-metal-frame liquid-metal-sequence-card bg-theme-card border border-theme-border rounded-xl">
       <div className="flex items-center gap-3 p-4 border-b border-theme-border">
         <Icon size={20} className="text-theme-text-muted" />
         <h2 className="text-lg font-semibold text-theme-text">{title}</h2>

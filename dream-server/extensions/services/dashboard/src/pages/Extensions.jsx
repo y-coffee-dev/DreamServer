@@ -44,8 +44,8 @@ const friendlyError = (detail) => {
 
 const STATUS_STYLES = {
   enabled:       'bg-green-500/20 text-green-400',
-  disabled:      'bg-zinc-700 text-zinc-400',
-  not_installed: 'border border-zinc-700 text-zinc-500',
+  disabled:      'bg-theme-border text-theme-text-muted',
+  not_installed: 'border border-theme-border text-theme-text-muted',
   incompatible:  'bg-orange-500/20 text-orange-400',
 }
 
@@ -141,7 +141,7 @@ export default function Extensions() {
   if (loading && !catalog) {
     return (
       <div className="p-8 flex items-center justify-center h-64">
-        <Loader2 className="animate-spin text-indigo-500" size={32} />
+        <Loader2 className="animate-spin text-theme-accent" size={32} />
       </div>
     )
   }
@@ -172,16 +172,16 @@ export default function Extensions() {
     <div className="p-8">
       <div className="mb-8 flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-white">Extensions</h1>
-          <p className="text-zinc-400 mt-1">
+          <h1 className="text-2xl font-bold text-theme-text">Extensions</h1>
+          <p className="text-theme-text-muted mt-1">
             Browse and discover add-on services.
           </p>
         </div>
         <div className="flex items-center gap-4">
           {catalog?.agent_available !== undefined && (
             <div className="flex items-center gap-1.5 text-xs">
-              <span className={`w-1.5 h-1.5 rounded-full ${catalog.agent_available ? 'bg-green-500' : 'bg-zinc-600'}`} />
-              <span className={catalog.agent_available ? 'text-green-400' : 'text-zinc-500'}>
+              <span className={`w-1.5 h-1.5 rounded-full ${catalog.agent_available ? 'bg-green-500' : 'bg-theme-border'}`} />
+              <span className={catalog.agent_available ? 'text-green-400' : 'text-theme-text-muted'}>
                 {catalog.agent_available ? 'Agent' : 'Agent offline'}
               </span>
             </div>
@@ -189,7 +189,7 @@ export default function Extensions() {
           <button
             onClick={fetchCatalog}
             disabled={refreshing}
-            className="text-sm text-indigo-300 hover:text-indigo-200 flex items-center gap-1.5 transition-colors disabled:opacity-50"
+            className="text-sm text-theme-accent-light hover:text-theme-accent flex items-center gap-1.5 transition-colors disabled:opacity-50"
           >
             <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} />
             Refresh
@@ -205,11 +205,11 @@ export default function Extensions() {
       )}
 
       {/* Summary bar */}
-      <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-4 mb-6">
+      <div className="bg-theme-card border border-theme-border rounded-xl p-4 mb-6 liquid-metal-frame liquid-metal-frame--soft">
         <div className="flex items-center gap-6 text-sm">
-          <SummaryItem label="Total" value={summary.total || extensions.length} color="bg-zinc-400" />
+          <SummaryItem label="Total" value={summary.total || extensions.length} color="bg-theme-text-muted" />
           <SummaryItem label="Installed" value={summary.installed ?? 0} color="bg-green-500" />
-          <SummaryItem label="Available" value={summary.not_installed ?? 0} color="bg-indigo-500" />
+          <SummaryItem label="Available" value={summary.not_installed ?? 0} color="bg-theme-accent" />
           <SummaryItem label="Incompatible" value={summary.incompatible ?? 0} color="bg-orange-500" />
         </div>
       </div>
@@ -222,8 +222,8 @@ export default function Extensions() {
             onClick={() => setStatusFilter(s)}
             className={`px-3 py-1 rounded-lg text-sm border transition-colors ${
               statusFilter === s
-                ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30'
-                : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700 border-transparent'
+                ? 'bg-theme-accent/20 text-theme-accent-light border-theme-accent/30'
+                : 'bg-theme-card text-theme-text-muted hover:bg-theme-surface-hover border-transparent'
             }`}
           >
             {STATUS_LABELS[s]}
@@ -240,8 +240,8 @@ export default function Extensions() {
               onClick={() => setCategory(cat)}
               className={`px-3 py-1 rounded-lg text-xs border transition-colors ${
                 category === cat
-                  ? 'bg-zinc-700 text-zinc-200 border-zinc-600'
-                  : 'bg-zinc-800/50 text-zinc-500 hover:bg-zinc-800 border-transparent'
+                  ? 'bg-theme-surface-hover text-theme-text border-theme-border'
+                  : 'bg-theme-card/50 text-theme-text-muted hover:bg-theme-surface-hover border-transparent'
               }`}
             >
               {cat === 'all' ? 'All Categories' : cat}
@@ -253,7 +253,7 @@ export default function Extensions() {
           placeholder="Search extensions..."
           value={search}
           onChange={e => setSearch(e.target.value)}
-          className="bg-zinc-800 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg px-3 py-1.5 text-sm w-full sm:w-64 outline-none focus:border-zinc-600"
+          className="bg-theme-card border border-theme-border text-theme-text placeholder-theme-text-muted rounded-lg px-3 py-1.5 text-sm w-full sm:w-64 outline-none focus:border-theme-accent/50"
         />
       </div>
 
@@ -267,13 +267,13 @@ export default function Extensions() {
 
       {/* Card grid */}
       {filtered.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-16 text-zinc-500">
+        <div className="flex flex-col items-center justify-center py-16 text-theme-text-muted">
           <Package size={48} className="mb-4 opacity-40" />
           <p className="text-lg">No extensions available</p>
           <p className="text-sm mt-1">Try adjusting your search or filters.</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 liquid-metal-sequence-grid liquid-metal-sequence-grid--services">
           {filtered.map(ext => (
             <ExtensionCard
               key={ext.id}
@@ -302,18 +302,18 @@ export default function Extensions() {
       {/* Confirmation dialog */}
       {confirm && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setConfirm(null)}>
-          <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-6 max-w-md mx-4" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Confirm action">
-            <h3 className="text-lg font-semibold text-white mb-2">
+          <div className="bg-theme-card border border-theme-border rounded-xl p-6 max-w-md mx-4" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Confirm action">
+            <h3 className="text-lg font-semibold text-theme-text mb-2">
               {confirm.action === 'uninstall' ? 'Remove' : confirm.action.charAt(0).toUpperCase() + confirm.action.slice(1)} Extension
             </h3>
-            <p className="text-sm text-zinc-400 mb-4">{confirm.message}</p>
+            <p className="text-sm text-theme-text-muted mb-4">{confirm.message}</p>
             <div className="flex justify-end gap-3">
-              <button onClick={() => setConfirm(null)} autoFocus className="px-4 py-2 text-sm text-zinc-400 hover:text-white transition-colors">Cancel</button>
+              <button onClick={() => setConfirm(null)} autoFocus className="px-4 py-2 text-sm text-theme-text-muted hover:text-theme-text transition-colors">Cancel</button>
               <button
                 onClick={() => handleMutation(confirm.ext.id, confirm.action)}
                 className={`px-4 py-2 text-sm rounded-lg transition-colors ${
                   confirm.action === 'uninstall' ? 'bg-red-500/20 text-red-300 hover:bg-red-500/30' :
-                  'bg-indigo-500/20 text-indigo-300 hover:bg-indigo-500/30'
+                  'bg-theme-accent/20 text-theme-accent-light hover:bg-theme-accent/30'
                 }`}
               >
                 {confirm.action === 'uninstall' ? 'Remove' : confirm.action.charAt(0).toUpperCase() + confirm.action.slice(1)}
@@ -327,7 +327,7 @@ export default function Extensions() {
       {toast && (
         <div className={`fixed bottom-6 right-6 z-50 rounded-xl border p-4 text-sm max-w-sm shadow-lg ${
           toast.type === 'error' ? 'border-red-500/20 bg-red-500/10 text-red-200' :
-          toast.type === 'info' ? 'border-indigo-500/20 bg-indigo-500/10 text-indigo-200' :
+          toast.type === 'info' ? 'border-theme-accent/20 bg-theme-accent/10 text-theme-accent-light' :
           'border-green-500/20 bg-green-500/10 text-green-200'
         }`}>
           <div className="flex items-center justify-between gap-3">
@@ -344,8 +344,8 @@ function SummaryItem({ label, value, color }) {
   return (
     <div className="flex items-center gap-2">
       <span className={`w-2 h-2 rounded-full ${color}`} />
-      <span className="text-zinc-400">{label}</span>
-      <span className="text-white font-medium">{value}</span>
+      <span className="text-theme-text-muted">{label}</span>
+      <span className="text-theme-text font-medium">{value}</span>
     </div>
   )
 }
@@ -368,8 +368,8 @@ function ExtensionCard({ ext, gpuBackend, agentAvailable, onDetails, onConsole, 
   const showInstall = status === 'not_installed' && ext.installable
 
   return (
-    <div className={`bg-zinc-900/50 border rounded-xl overflow-hidden transition-all ${
-      isCore ? 'border-zinc-800/60 opacity-70' : 'border-zinc-800 hover:border-zinc-600'
+    <div className={`bg-theme-card border rounded-xl transition-all liquid-metal-frame liquid-metal-sequence-card ${
+      isCore ? 'border-theme-border/60 opacity-70' : 'border-theme-border'
     }`}>
       {/* Card body */}
       <div className="p-4 pb-3">
@@ -378,18 +378,18 @@ function ExtensionCard({ ext, gpuBackend, agentAvailable, onDetails, onConsole, 
             <div className={`p-1.5 rounded-lg ${
               status === 'enabled' ? 'bg-green-500/10' :
               status === 'incompatible' ? 'bg-orange-500/10' :
-              'bg-zinc-800'
+              'bg-theme-card'
             }`}>
               <Icon size={16} className={
                 status === 'enabled' ? 'text-green-400' :
                 status === 'incompatible' ? 'text-orange-400' :
-                'text-zinc-400'
+                'text-theme-text-muted'
               } />
             </div>
             <div>
-              <h3 className="text-sm font-semibold text-white leading-tight">{ext.name}</h3>
+              <h3 className="text-sm font-semibold text-theme-text leading-tight">{ext.name}</h3>
               {ext.features?.[0]?.category && (
-                <span className="text-[10px] text-zinc-600 uppercase tracking-wider">{ext.features[0].category}</span>
+                <span className="text-[10px] text-theme-text-muted uppercase tracking-wider">{ext.features[0].category}</span>
               )}
             </div>
           </div>
@@ -415,7 +415,7 @@ function ExtensionCard({ ext, gpuBackend, agentAvailable, onDetails, onConsole, 
                 title={disabledTitle}
                 onClick={() => onAction(ext, status === 'enabled' ? 'disable' : 'enable')}
                 className={`relative inline-flex h-[18px] w-[32px] shrink-0 rounded-full transition-colors disabled:opacity-50 ${
-                  status === 'enabled' ? 'bg-green-500' : 'bg-zinc-600'
+                  status === 'enabled' ? 'bg-green-500' : 'bg-theme-border'
                 }`}
               >
                 {isMutating ? (
@@ -429,18 +429,18 @@ function ExtensionCard({ ext, gpuBackend, agentAvailable, onDetails, onConsole, 
             )}
           </div>
         </div>
-        <p className="text-xs text-zinc-500 line-clamp-2 leading-relaxed">{ext.description || 'No description available.'}</p>
+        <p className="text-xs text-theme-text-muted line-clamp-2 leading-relaxed">{ext.description || 'No description available.'}</p>
       </div>
 
       {/* Card footer */}
-      <div className="border-t border-zinc-800/60 px-4 py-2.5 flex items-center justify-between bg-zinc-900/30">
+      <div className="border-t border-theme-border/60 px-4 py-2.5 flex items-center justify-between bg-theme-card/30">
         <div className="flex gap-1.5">
           {showInstall && (
             <button
               disabled={actionDisabled}
               title={disabledTitle}
               onClick={() => onAction(ext, 'install')}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-indigo-500 text-white hover:bg-indigo-400 transition-colors disabled:opacity-50 shadow-sm shadow-indigo-500/20"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-theme-accent text-white hover:bg-theme-accent-hover transition-colors disabled:opacity-50 shadow-sm shadow-theme-accent/20"
             >
               {isMutating ? <Loader2 size={12} className="animate-spin" /> : <><Download size={12} /> Install</>}
             </button>
@@ -450,19 +450,19 @@ function ExtensionCard({ ext, gpuBackend, agentAvailable, onDetails, onConsole, 
               disabled={actionDisabled}
               title={disabledTitle}
               onClick={() => onAction(ext, 'uninstall')}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-zinc-800 text-red-400 hover:bg-red-500/20 hover:text-red-300 transition-colors disabled:opacity-50"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-theme-card text-red-400 hover:bg-red-500/20 hover:text-red-300 transition-colors disabled:opacity-50"
             >
               {isMutating ? <Loader2 size={12} className="animate-spin" /> : <><Trash2 size={12} /> Remove</>}
             </button>
           )}
           {isUserExt && status === 'enabled' && (
-            <span className="text-[10px] text-zinc-600">Disable to remove</span>
+            <span className="text-[10px] text-theme-text-muted">Disable to remove</span>
           )}
           {!showInstall && !showRemove && !isToggleable && (
             <div className="flex items-center gap-1" title={status === 'incompatible' && gpuBackend ? `Your system: ${gpuBackend}` : undefined}>
-              {status === 'incompatible' && <span className="text-[10px] text-zinc-600 mr-0.5">Requires:</span>}
+              {status === 'incompatible' && <span className="text-[10px] text-theme-text-muted mr-0.5">Requires:</span>}
               {ext.gpu_backends?.slice(0, 3).map(gpu => (
-                <span key={gpu} className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800/80 text-zinc-600">{gpu}</span>
+                <span key={gpu} className="text-[10px] px-1.5 py-0.5 rounded bg-theme-card/80 text-theme-text-muted">{gpu}</span>
               ))}
             </div>
           )}
@@ -474,7 +474,7 @@ function ExtensionCard({ ext, gpuBackend, agentAvailable, onDetails, onConsole, 
               target="_blank"
               rel="noopener noreferrer"
               onClick={e => e.stopPropagation()}
-              className="flex items-center gap-1 px-2 py-1.5 text-xs text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/10 rounded-lg transition-colors"
+              className="flex items-center gap-1 px-2 py-1.5 text-xs text-theme-accent-light hover:text-theme-accent hover:bg-theme-accent/10 rounded-lg transition-colors"
               title={`Open on port ${ext.external_port_default || ext.port}`}
             >
               <ExternalLink size={11} />
@@ -486,7 +486,7 @@ function ExtensionCard({ ext, gpuBackend, agentAvailable, onDetails, onConsole, 
               onClick={onConsole}
               disabled={agentOffline}
               className={`flex items-center gap-1 px-2 py-1.5 text-xs rounded-lg transition-colors ${
-                agentOffline ? 'text-zinc-600 cursor-not-allowed' : 'text-zinc-500 hover:text-green-400 hover:bg-green-500/10'
+                agentOffline ? 'text-theme-text-muted cursor-not-allowed' : 'text-theme-text-muted hover:text-green-400 hover:bg-green-500/10'
               }`}
               title={agentOffline ? 'Agent offline' : 'View logs'}
             >
@@ -495,7 +495,7 @@ function ExtensionCard({ ext, gpuBackend, agentAvailable, onDetails, onConsole, 
           )}
           <button
             onClick={onDetails}
-            className="flex items-center gap-1 px-2 py-1.5 text-xs text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 rounded-lg transition-colors"
+            className="flex items-center gap-1 px-2 py-1.5 text-xs text-theme-text-muted hover:text-theme-text hover:bg-theme-surface-hover rounded-lg transition-colors"
           >
             <Info size={11} />
           </button>
@@ -526,16 +526,16 @@ function DetailModal({ ext, gpuBackend, onClose }) {
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={onClose}>
       <div
-        className="bg-zinc-900 border border-zinc-700 rounded-xl w-full max-w-lg max-h-[80vh] overflow-y-auto mx-4"
+        className="bg-theme-card border border-theme-border rounded-xl w-full max-w-lg max-h-[80vh] overflow-y-auto mx-4"
         onClick={e => e.stopPropagation()}
         role="dialog" aria-modal="true" aria-label={ext.name}
       >
         {/* Header */}
-        <div className="sticky top-0 bg-zinc-900 border-b border-zinc-800 p-4 flex items-center justify-between rounded-t-xl">
+        <div className="sticky top-0 bg-theme-card border-b border-theme-border p-4 flex items-center justify-between rounded-t-xl">
           <div className="flex items-center gap-3">
-            <Icon size={22} className="text-zinc-400" />
+            <Icon size={22} className="text-theme-text-muted" />
             <div>
-              <h3 className="text-lg font-semibold text-white">{ext.name}</h3>
+              <h3 className="text-lg font-semibold text-theme-text">{ext.name}</h3>
               <span
                 className={`text-xs px-2 py-0.5 rounded-full ${statusStyle}`}
                 title={isIncompatible ? `Requires ${ext.gpu_backends?.join(' or ') || 'specific GPU'} — your system: ${gpuBackend || 'unknown'}` : ext.source === 'core' ? 'Built-in service — managed by DreamServer' : undefined}
@@ -544,45 +544,45 @@ function DetailModal({ ext, gpuBackend, onClose }) {
               </span>
             </div>
           </div>
-          <button onClick={onClose} autoFocus className="text-zinc-500 hover:text-zinc-300 transition-colors p-1">
+          <button onClick={onClose} autoFocus className="text-theme-text-muted hover:text-theme-text-secondary transition-colors p-1">
             <X size={18} />
           </button>
         </div>
 
         <div className="p-4 space-y-4">
           {/* Description */}
-          <p className="text-sm text-zinc-400">{ext.description || 'No description available.'}</p>
+          <p className="text-sm text-theme-text-muted">{ext.description || 'No description available.'}</p>
 
           {/* Info grid */}
           <div className="grid grid-cols-2 gap-3 text-sm">
-            <div className="bg-zinc-800/50 rounded-lg p-3">
-              <span className="text-zinc-500 text-xs block mb-1">Port</span>
-              <span className="text-white font-mono">{ext.external_port_default || ext.port || '—'}</span>
+            <div className="bg-theme-card/50 rounded-lg p-3">
+              <span className="text-theme-text-muted text-xs block mb-1">Port</span>
+              <span className="text-theme-text font-mono">{ext.external_port_default || ext.port || '—'}</span>
             </div>
-            <div className="bg-zinc-800/50 rounded-lg p-3">
-              <span className="text-zinc-500 text-xs block mb-1">GPU</span>
-              <span className="text-white">{ext.gpu_backends?.join(', ') || 'none'}</span>
+            <div className="bg-theme-card/50 rounded-lg p-3">
+              <span className="text-theme-text-muted text-xs block mb-1">GPU</span>
+              <span className="text-theme-text">{ext.gpu_backends?.join(', ') || 'none'}</span>
               {isIncompatible && gpuBackend && (
                 <span className="text-orange-400 text-[10px] block mt-1">Your system: {gpuBackend}</span>
               )}
             </div>
-            <div className="bg-zinc-800/50 rounded-lg p-3">
-              <span className="text-zinc-500 text-xs block mb-1">Category</span>
-              <span className="text-white">{ext.category || '—'}</span>
+            <div className="bg-theme-card/50 rounded-lg p-3">
+              <span className="text-theme-text-muted text-xs block mb-1">Category</span>
+              <span className="text-theme-text">{ext.category || '—'}</span>
             </div>
-            <div className="bg-zinc-800/50 rounded-lg p-3">
-              <span className="text-zinc-500 text-xs block mb-1">Health</span>
-              <span className="text-white font-mono text-xs">{ext.health_endpoint || '—'}</span>
+            <div className="bg-theme-card/50 rounded-lg p-3">
+              <span className="text-theme-text-muted text-xs block mb-1">Health</span>
+              <span className="text-theme-text font-mono text-xs">{ext.health_endpoint || '—'}</span>
             </div>
           </div>
 
           {/* Dependencies */}
           {deps.length > 0 && (
             <div>
-              <h4 className="text-xs font-medium text-zinc-500 uppercase tracking-wider mb-2">Dependencies</h4>
+              <h4 className="text-xs font-medium text-theme-text-muted uppercase tracking-wider mb-2">Dependencies</h4>
               <div className="flex flex-wrap gap-2">
                 {deps.map(dep => (
-                  <span key={dep} className="bg-zinc-800 text-zinc-400 rounded px-2 py-1 text-xs">{dep}</span>
+                  <span key={dep} className="bg-theme-card text-theme-text-muted rounded px-2 py-1 text-xs">{dep}</span>
                 ))}
               </div>
             </div>
@@ -591,20 +591,20 @@ function DetailModal({ ext, gpuBackend, onClose }) {
           {/* Environment variables */}
           {envVars.length > 0 && (
             <div>
-              <h4 className="text-xs font-medium text-zinc-500 uppercase tracking-wider mb-2">Environment Variables</h4>
-              <div className="bg-zinc-800/50 rounded-lg overflow-hidden">
+              <h4 className="text-xs font-medium text-theme-text-muted uppercase tracking-wider mb-2">Environment Variables</h4>
+              <div className="bg-theme-card/50 rounded-lg overflow-hidden">
                 <table className="w-full text-sm">
                   <thead>
-                    <tr className="border-b border-zinc-700">
-                      <th className="text-left px-3 py-2 text-zinc-500 font-medium text-xs">Key</th>
-                      <th className="text-left px-3 py-2 text-zinc-500 font-medium text-xs">Description</th>
+                    <tr className="border-b border-theme-border">
+                      <th className="text-left px-3 py-2 text-theme-text-muted font-medium text-xs">Key</th>
+                      <th className="text-left px-3 py-2 text-theme-text-muted font-medium text-xs">Description</th>
                     </tr>
                   </thead>
                   <tbody>
                     {envVars.map(v => (
-                      <tr key={v.key || v.name} className="border-b border-zinc-700/50 last:border-0">
-                        <td className="px-3 py-2 text-indigo-300 font-mono text-xs">{v.key || v.name}</td>
-                        <td className="px-3 py-2 text-zinc-400 text-xs">{v.description || '-'}</td>
+                      <tr key={v.key || v.name} className="border-b border-theme-border/50 last:border-0">
+                        <td className="px-3 py-2 text-theme-accent-light font-mono text-xs">{v.key || v.name}</td>
+                        <td className="px-3 py-2 text-theme-text-muted text-xs">{v.description || '-'}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -616,13 +616,13 @@ function DetailModal({ ext, gpuBackend, onClose }) {
           {/* Features */}
           {features.length > 0 && (
             <div>
-              <h4 className="text-xs font-medium text-zinc-500 uppercase tracking-wider mb-2">Features</h4>
+              <h4 className="text-xs font-medium text-theme-text-muted uppercase tracking-wider mb-2">Features</h4>
               <div className="space-y-1">
                 {features.map(feat => (
                   <div key={feat.name} className="flex items-center gap-2 text-sm">
-                    <span className="w-1.5 h-1.5 rounded-full bg-indigo-500" />
-                    <span className="text-zinc-300">{feat.name}</span>
-                    {feat.category && <span className="text-xs text-zinc-600">({feat.category})</span>}
+                    <span className="w-1.5 h-1.5 rounded-full bg-theme-accent" />
+                    <span className="text-theme-text-secondary">{feat.name}</span>
+                    {feat.category && <span className="text-xs text-theme-text-muted">({feat.category})</span>}
                   </div>
                 ))}
               </div>
@@ -632,12 +632,12 @@ function DetailModal({ ext, gpuBackend, onClose }) {
           {/* Login / Credentials */}
           {envVars.some(v => /password|secret|token|key/i.test(v.key || '')) && (
             <div>
-              <h4 className="text-xs font-medium text-zinc-500 uppercase tracking-wider mb-2">Login Credentials</h4>
-              <p className="text-xs text-zinc-500 mb-2">Run this in your terminal to see login info:</p>
+              <h4 className="text-xs font-medium text-theme-text-muted uppercase tracking-wider mb-2">Login Credentials</h4>
+              <p className="text-xs text-theme-text-muted mb-2">Run this in your terminal to see login info:</p>
               <CopyableCommand command={
                 `docker exec dream-${ext.id} env | grep -iE "${envVars.filter(v => /username|password|secret|token|key|user|email/i.test(v.key || '')).map(v => v.key).join('|')}"`
               } />
-              <p className="text-xs text-zinc-600 mt-1.5">Or check your .env file directly:</p>
+              <p className="text-xs text-theme-text-muted mt-1.5">Or check your .env file directly:</p>
               <CopyableCommand command={
                 `grep -E "${envVars.filter(v => /username|password|secret|token|key|user|email/i.test(v.key || '')).map(v => v.key).join('|')}" .env`
               } />
@@ -646,7 +646,7 @@ function DetailModal({ ext, gpuBackend, onClose }) {
 
           {/* CLI Commands */}
           <div>
-            <h4 className="text-xs font-medium text-zinc-500 uppercase tracking-wider mb-2">CLI Commands</h4>
+            <h4 className="text-xs font-medium text-theme-text-muted uppercase tracking-wider mb-2">CLI Commands</h4>
             <div className="space-y-1">
               <CopyableCommand command={`dream enable ${ext.id}`} />
               <CopyableCommand command={`dream disable ${ext.id}`} />
@@ -754,22 +754,22 @@ function ConsoleModal({ ext, onClose }) {
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50" onClick={onClose}>
       <div
-        className="bg-[#0d0d11] border border-zinc-700 rounded-xl w-full max-w-3xl h-[70vh] flex flex-col mx-4"
+        className="bg-theme-bg border border-theme-border rounded-xl w-full max-w-3xl h-[70vh] flex flex-col mx-4"
         onClick={e => e.stopPropagation()}
         role="dialog" aria-modal="true" aria-label={`${ext.name} logs`}
       >
-        <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-theme-border">
           <div className="flex items-center gap-2">
             <Terminal size={16} className={disconnected ? 'text-red-400' : 'text-green-400'} />
-            <span className="text-sm font-medium text-white">{ext.name}</span>
-            <span className="text-xs text-zinc-600">logs</span>
+            <span className="text-sm font-medium text-theme-text">{ext.name}</span>
+            <span className="text-xs text-theme-text-muted">logs</span>
             {disconnected ? (
               <span className="w-1.5 h-1.5 rounded-full bg-red-500" title="Disconnected" />
             ) : (
               <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" title="Live" />
             )}
           </div>
-          <button onClick={onClose} autoFocus className="text-zinc-500 hover:text-zinc-300 transition-colors p-1">
+          <button onClick={onClose} autoFocus className="text-theme-text-muted hover:text-theme-text-secondary transition-colors p-1">
             <X size={16} />
           </button>
         </div>
@@ -777,10 +777,10 @@ function ConsoleModal({ ext, onClose }) {
           <div
             ref={el => { logRef.current = el }}
             onScroll={handleScroll}
-            className="absolute inset-0 overflow-y-auto p-4 font-mono text-xs leading-relaxed text-zinc-300 whitespace-pre-wrap break-all"
+            className="absolute inset-0 overflow-y-auto p-4 font-mono text-xs leading-relaxed text-theme-text-secondary whitespace-pre-wrap break-all"
           >
             {loading && !logs ? (
-              <div className="flex items-center gap-2 text-zinc-500">
+              <div className="flex items-center gap-2 text-theme-text-muted">
                 <Loader2 size={14} className="animate-spin" /> Loading logs...
               </div>
             ) : (
@@ -800,17 +800,17 @@ function ConsoleModal({ ext, onClose }) {
           {!atBottom && (
             <button
               onClick={scrollToBottom}
-              className="absolute bottom-2 right-4 bg-zinc-800 border border-zinc-700 text-zinc-400 hover:text-white rounded-full px-3 py-1 text-xs shadow-lg transition-colors"
+              className="absolute bottom-2 right-4 bg-theme-card border border-theme-border text-theme-text-muted hover:text-theme-text rounded-full px-3 py-1 text-xs shadow-lg transition-colors"
             >
               ↓ Jump to bottom
             </button>
           )}
         </div>
-        <div className="border-t border-zinc-800 px-4 py-2 flex items-center justify-between">
-          <span className={`text-[10px] ${disconnected ? 'text-red-400' : 'text-zinc-600'}`}>
+        <div className="border-t border-theme-border px-4 py-2 flex items-center justify-between">
+          <span className={`text-[10px] ${disconnected ? 'text-red-400' : 'text-theme-text-muted'}`}>
             {disconnected ? 'Reconnecting...' : 'Auto-refreshing every 2s'}
           </span>
-          <button onClick={fetchLogsOnce} className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors" title="Refresh now">
+          <button onClick={fetchLogsOnce} className="text-xs text-theme-text-muted hover:text-theme-text-secondary transition-colors" title="Refresh now">
             <RefreshCw size={12} />
           </button>
         </div>
@@ -829,11 +829,11 @@ function CopyableCommand({ command }) {
   }
 
   return (
-    <div className="group flex items-center justify-between bg-zinc-800 rounded px-3 py-1.5 font-mono text-sm text-zinc-300">
+    <div className="group flex items-center justify-between bg-theme-card rounded px-3 py-1.5 font-mono text-sm text-theme-text-secondary">
       <span className="truncate mr-2">{command}</span>
       <button
         onClick={handleCopy}
-        className="shrink-0 text-zinc-600 hover:text-zinc-300 transition-colors"
+        className="shrink-0 text-theme-text-muted hover:text-theme-text-secondary transition-colors"
         title="Copy to clipboard"
       >
         {copied ? <Check size={13} className="text-green-400" /> : <Copy size={13} />}
