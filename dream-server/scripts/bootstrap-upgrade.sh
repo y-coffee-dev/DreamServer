@@ -381,4 +381,17 @@ else
     log "Docker services not running. Config updated — full model will load on next start."
 fi
 
+# ── Phase 6: Restart host agent (if running) ──
+# The host agent may cache stale state — restart it so it picks up the new
+# model config and any updated endpoints.
+if command -v systemctl &>/dev/null && systemctl --user is-active dream-host-agent.service &>/dev/null; then
+    log "Restarting dream-host-agent (systemd)..."
+    systemctl --user restart dream-host-agent.service 2>&1 || \
+        log "WARNING: Could not restart host agent (non-fatal)"
+elif [[ -f "$HOME/Library/LaunchAgents/com.dreamserver.host-agent.plist" ]]; then
+    log "Restarting dream-host-agent (launchctl)..."
+    launchctl kickstart -k "gui/$(id -u)/com.dreamserver.host-agent" 2>&1 || \
+        log "WARNING: Could not restart host agent (non-fatal)"
+fi
+
 log "Bootstrap upgrade complete."
