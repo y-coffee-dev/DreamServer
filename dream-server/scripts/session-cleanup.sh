@@ -143,15 +143,17 @@ if [ -n "$WIPE_IDS" ]; then
 
         "$PYTHON_CMD" -c "
 import json, sys
-with open('$SESSIONS_JSON', 'r') as f:
+sessions_file = sys.argv[1]
+target_id = sys.argv[2]
+with open(sessions_file, 'r') as f:
     data = json.load(f)
-to_remove = [k for k, v in data.items() if isinstance(v, dict) and v.get('sessionId') == '$ID']
+to_remove = [k for k, v in data.items() if isinstance(v, dict) and v.get('sessionId') == target_id]
 for k in to_remove:
     del data[k]
     print(f'  Removed session key: {k}', file=sys.stderr)
-with open('$SESSIONS_JSON', 'w') as f:
+with open(sessions_file, 'w') as f:
     json.dump(data, f, indent=2)
-" 2>&1
+" "$SESSIONS_JSON" "$ID" 2>&1
     done
 
     # Clean up the backup
