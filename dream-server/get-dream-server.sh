@@ -157,7 +157,8 @@ if [[ "$OS" == "linux" || "$OS" == "wsl" ]]; then
         if [[ -n "$GPU_INFO" ]]; then
             success "NVIDIA GPU detected: $GPU_INFO"
             # Extract VRAM in MB and check minimum
-            VRAM_MB=$(echo "$GPU_INFO" | grep -oP '\d+(?= MiB)' || echo "0")
+            VRAM_MB=$(echo "$GPU_INFO" | sed -n 's/.*[^0-9]\([0-9][0-9]*\) MiB.*/\1/p')
+            VRAM_MB=${VRAM_MB:-0}
             if [[ "$VRAM_MB" -lt 8192 ]]; then
                 warn "GPU has less than 8GB VRAM. Some models may not fit."
                 echo "  Consider using a smaller model (7B) or cloud fallback."

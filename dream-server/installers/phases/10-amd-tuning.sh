@@ -187,7 +187,7 @@ GTT_EOF
                 ai "  sudo systemctl enable --now tuned && sudo tuned-adm profile accelerator-performance"
             fi
         else
-            active_profile=$(tuned-adm active 2>/dev/null | grep -oP 'Current active profile: \K.*' || true)
+            active_profile=$(tuned-adm active 2>/dev/null | sed -n 's/^Current active profile: \(.*\)/\1/p' || true)
             if [[ "$active_profile" != "accelerator-performance" ]]; then
                 sudo -n tuned-adm profile accelerator-performance 2>/dev/null && \
                     ai_ok "tuned profile changed to accelerator-performance" || \

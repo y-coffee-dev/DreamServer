@@ -190,7 +190,7 @@ echo "3. Retry Strategy Tests (source-level sanity checks)"
 echo "────────────────────────────────────────────────────"
 
 printf "  %-60s " "max_attempts is 3..."
-retry_count=$(grep -A 15 "^pull_with_progress()" "$ROOT_DIR/installers/lib/ui.sh" | grep -m1 "max_attempts=" | grep -oP '\d+' || true)
+retry_count=$(grep -A 15 "^pull_with_progress()" "$ROOT_DIR/installers/lib/ui.sh" | grep -m1 "max_attempts=" | grep -oE '[0-9]+' || true)
 retry_count=${retry_count:-0}
 if [[ "$retry_count" == "3" ]]; then
   print_pass

@@ -103,7 +103,7 @@ detect_gpu() {
             GPU_NAME=$(echo "$GPU_INFO" | head -1 | cut -d',' -f1 | xargs)
             GPU_COUNT=$(echo "$GPU_INFO" | wc -l)
             # Sum VRAM across all GPUs (each line = one GPU)
-            GPU_VRAM=$(echo "$GPU_INFO" | cut -d',' -f2 | grep -oP '\d+' | awk '{s+=$1} END {print s+0}')
+            GPU_VRAM=$(echo "$GPU_INFO" | cut -d',' -f2 | grep -oE '[0-9]+' | awk '{s+=$1} END {print s+0}')
             # Extract PCI device ID from first GPU
             local pci_id
             pci_id=$(nvidia-smi --query-gpu=pci.device_id --format=csv,noheader 2>/dev/null | head -1 | xargs)
@@ -221,7 +221,7 @@ fix_nvidia_secure_boot() {
     # Step 2: Ensure a driver package is installed
     local installed_driver
     installed_driver=$(dpkg-query -W -f='${Package}\n' 'nvidia-driver-*' 2>/dev/null \
-                       | grep -oP 'nvidia-driver-\K\d+' | sort -n | tail -1 || true)
+                       | sed -n 's/.*nvidia-driver-\([0-9][0-9]*\).*/\1/p' | sort -n | tail -1 || true)
 
     if [[ -z "$installed_driver" ]]; then
         ai "No NVIDIA driver package found. Installing recommended driver..."
@@ -232,7 +232,7 @@ fix_nvidia_secure_boot() {
             sudo apt-get install -y "nvidia-driver-${MIN_DRIVER_VERSION}" 2>>"$LOG_FILE" || true
         fi
         installed_driver=$(dpkg-query -W -f='${Package}\n' 'nvidia-driver-*' 2>/dev/null \
-                           | grep -oP 'nvidia-driver-\K\d+' | sort -n | tail -1 || true)
+                           | sed -n 's/.*nvidia-driver-\([0-9][0-9]*\).*/\1/p' | sort -n | tail -1 || true)
         if [[ -z "$installed_driver" ]]; then
             ai_bad "Failed to install NVIDIA driver."
             return 1

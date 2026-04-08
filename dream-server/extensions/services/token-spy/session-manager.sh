@@ -73,7 +73,7 @@ clean_inactive() {
   [ -f "$sessions_json" ] || return 0
 
   local active_ids
-  active_ids=$(grep -oP '"sessionId":\s*"\K[^"]+' "$sessions_json" 2>/dev/null || true)
+  active_ids=$(sed -n 's/.*"sessionId":[[:space:]]*"\([^"]*\)".*/\1/p' "$sessions_json" 2>/dev/null || true)
 
   for f in "$sessions_dir"/*.jsonl; do
     [ -f "$f" ] || continue
@@ -192,7 +192,7 @@ manage_remote_agent() {
     echo "SESSION_LIST_END"
     if [ -f "\$SESSIONS_DIR/sessions.json" ]; then
       echo "ACTIVE_IDS_START"
-      grep -oP '"sessionId":\s*"\K[^"]+' "\$SESSIONS_DIR/sessions.json" 2>/dev/null || true
+      sed -n 's/.*"sessionId":[[:space:]]*"\([^"]*\)".*/\1/p' "\$SESSIONS_DIR/sessions.json" 2>/dev/null || true
       echo "ACTIVE_IDS_END"
     fi
     echo "TOTAL_SIZE=\$(du -sb "\$SESSIONS_DIR" 2>/dev/null | cut -f1)"

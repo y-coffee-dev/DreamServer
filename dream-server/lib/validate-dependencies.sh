@@ -28,7 +28,7 @@ validate_service_dependencies() {
         local _svc
         while IFS= read -r _svc; do
             enabled_services[$_svc]=1
-        done < <(grep -oP '^  \K[a-z][a-z0-9_-]+(?=:)' "$_base_compose" 2>/dev/null)
+        done < <(sed -n 's/^  \([a-z][a-z0-9_-]*\):.*/\1/p' "$_base_compose" 2>/dev/null)
     fi
 
     # Check each enabled service's dependencies
@@ -78,7 +78,7 @@ validate_dependencies_verbose() {
         local _svc
         while IFS= read -r _svc; do
             enabled_services[$_svc]=1
-        done < <(grep -oP '^  \K[a-z][a-z0-9_-]+(?=:)' "$_base_compose" 2>/dev/null)
+        done < <(sed -n 's/^  \([a-z][a-z0-9_-]*\):.*/\1/p' "$_base_compose" 2>/dev/null)
     fi
 
     local total_enabled=${#enabled_services[@]}

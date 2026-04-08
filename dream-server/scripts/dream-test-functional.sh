@@ -81,7 +81,7 @@ test_llm_functional() {
     fi
 
     local content
-    content=$(echo "$response" | grep -oP '"content":\s*"[^"]+"' | head -1 | cut -d'"' -f4)
+    content=$(echo "$response" | grep -oE '"content":[[:space:]]*"[^"]+"' | head -1 | cut -d'"' -f4)
 
     if [[ -z "$content" ]]; then
         fail "LLM returned empty content"
@@ -227,7 +227,7 @@ test_whisper_functional() {
     fi
     
     local transcription
-    transcription=$(echo "$response" | grep -oP '"text":\s*"[^"]+"' | head -1 | cut -d'"' -f4)
+    transcription=$(echo "$response" | grep -oE '"text":[[:space:]]*"[^"]+"' | head -1 | cut -d'"' -f4)
     
     if [[ -z "$transcription" ]]; then
         fail "Whisper returned empty transcription"

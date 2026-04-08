@@ -54,7 +54,7 @@ pass "Upgrade script ready"
 
 # ===== Test 5: Healthcheck timing =====
 info "Test 5: Checking healthcheck configuration..."
-MAIN_START_PERIOD=$(grep -A10 "llama-server:" docker-compose.yml | grep -A5 "healthcheck:" | grep "start_period" | grep -oP '\d+' | head -1 || echo "0")
+MAIN_START_PERIOD=$(grep -A10 "llama-server:" docker-compose.yml | grep -A5 "healthcheck:" | grep "start_period" | grep -oE '[0-9]+' | head -1 || echo "0")
 if [[ "$MAIN_START_PERIOD" -gt 0 ]]; then
     pass "llama-server healthcheck start_period configured ($MAIN_START_PERIOD)"
 else
