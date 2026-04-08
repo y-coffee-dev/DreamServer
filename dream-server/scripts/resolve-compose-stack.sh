@@ -70,6 +70,7 @@ env_mode = (sys.argv[5] or "false").lower() == "true"
 skip_broken = (sys.argv[6] or "false").lower() == "true"
 dream_mode = os.environ.get("DREAM_MODE", "local").lower()
 gpu_count = int(sys.argv[7] or "1")
+cluster_enabled = os.environ.get("CLUSTER_ENABLED", "false").lower() == "true"
 
 IS_DARWIN = platform.system() == "Darwin"
 APPLE_OVERLAY = "installers/macos/docker-compose.macos.yml" if IS_DARWIN else "docker-compose.apple.yml"
@@ -138,6 +139,15 @@ if gpu_count > 1:
     multigpu_file = f"docker-compose.multigpu-{gpu_backend}.yml"
     if (script_dir / multigpu_file).exists():
         resolved.append(multigpu_file)
+
+# LAN cluster overlay (replaces llama-server image with RPC-enabled build)
+if cluster_enabled:
+    if gpu_backend == "amd":
+        cluster_file = "docker-compose.cluster-amd.yml"
+    else:
+        cluster_file = "docker-compose.cluster.yml"
+    if (script_dir / cluster_file).exists():
+        resolved.append(cluster_file)
 
 # Discover enabled extension compose fragments via manifests
 ext_dir = script_dir / "extensions" / "services"
