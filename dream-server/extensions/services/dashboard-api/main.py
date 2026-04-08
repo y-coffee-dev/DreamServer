@@ -19,7 +19,6 @@ import json
 import logging
 import os
 import re
-import shlex
 import socket
 import shutil
 import time
