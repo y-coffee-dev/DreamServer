@@ -170,6 +170,7 @@ services:
       - KOKORO_URL=${KOKORO_URL:-http://tts:8880}
       - N8N_URL=${N8N_URL:-http://n8n:5678}
       - DASHBOARD_API_KEY=${DASHBOARD_API_KEY:-}
+      - DREAM_AGENT_KEY=${DREAM_AGENT_KEY:-}
       - OPENCLAW_TOKEN=${OPENCLAW_TOKEN:-}
       - TOKEN_SPY_URL=${TOKEN_SPY_URL:-http://token-spy:8080}
       - TOKEN_SPY_API_KEY=${TOKEN_SPY_API_KEY:-}

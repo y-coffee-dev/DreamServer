@@ -69,6 +69,14 @@ async def toggle_privacy_shield(request: PrivacyShieldToggle, api_key: str = Dep
             msg = "Privacy Shield started. PII scrubbing is now active." if request.enable else "Privacy Shield stopped."
             return {"success": True, "message": msg}
         return {"success": False, "message": f"Host agent returned failure for {action}"}
+    except urllib.error.HTTPError as e:
+        body = ""
+        try:
+            body = e.read().decode()
+        except Exception:
+            pass
+        logger.warning("Privacy Shield toggle failed: HTTP %d: %s", e.code, body)
+        return {"success": False, "message": f"Host agent returned error ({e.code}): {body or e.reason}"}
     except urllib.error.URLError:
         return {"success": False, "message": "Host agent not reachable", "note": "Ensure the dream host agent is running"}
     except asyncio.TimeoutError:

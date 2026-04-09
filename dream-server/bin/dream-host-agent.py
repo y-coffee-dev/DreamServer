@@ -42,6 +42,8 @@ AGENT_API_KEY: str = ""
 GPU_BACKEND: str = "nvidia"
 TIER: str = "1"
 CORE_SERVICE_IDS: set = set()
+# Core services that can be toggled via the extension API (e.g., privacy shield)
+TOGGLABLE_CORE_SERVICES: set = {"privacy-shield"}
 USER_EXTENSIONS_DIR: Path = Path()
 
 # Per-service locks to prevent concurrent start+stop races on the same service
@@ -217,11 +219,14 @@ def validate_service_id(handler, body: dict) -> str | None:
     if not isinstance(sid, str) or not SERVICE_ID_RE.match(sid):
         json_response(handler, 400, {"error": "Invalid service_id"})
         return None
-    if sid in CORE_SERVICE_IDS:
+    if sid in CORE_SERVICE_IDS and sid not in TOGGLABLE_CORE_SERVICES:
         json_response(handler, 403, {"error": f"Cannot manage core service: {sid}"})
         return None
-    # Verify the service_id maps to an actual installed extension
+    # Verify the service_id maps to an actual installed extension.
+    # Check user-extensions first, then core extensions for togglable services.
     ext_dir = USER_EXTENSIONS_DIR / sid
+    if not ext_dir.is_dir() and sid in TOGGLABLE_CORE_SERVICES:
+        ext_dir = INSTALL_DIR / "extensions" / "services" / sid
     manifest_exists = any((ext_dir / n).exists() for n in ("manifest.yaml", "manifest.yml", "manifest.json"))
     if not ext_dir.is_dir() or not manifest_exists:
         json_response(handler, 404, {"error": f"Extension not found: {sid}"})
