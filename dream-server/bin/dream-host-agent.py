@@ -989,19 +989,26 @@ class AgentHandler(BaseHTTPRequestHandler):
             if flags_file.exists():
                 compose_flags = flags_file.read_text(encoding="utf-8").strip().split()
 
+            # When the agent runs inside a container, relative paths in
+            # docker-compose resolve to the container's mount, not the
+            # host filesystem. DREAM_HOST_INSTALL_DIR tells compose the
+            # real host path so volume mounts resolve correctly.
+            host_install_dir = os.environ.get("DREAM_HOST_INSTALL_DIR", str(INSTALL_DIR))
+            compose_env = {**os.environ, "PWD": host_install_dir}
+
             if gpu_backend == "amd":
                 if compose_flags:
-                    subprocess.run(["docker", "compose"] + compose_flags + ["restart", "llama-server"],
-                                   cwd=str(INSTALL_DIR), capture_output=True, timeout=300)
+                    subprocess.run(["docker", "compose", "--project-directory", host_install_dir] + compose_flags + ["restart", "llama-server"],
+                                   cwd=host_install_dir, env=compose_env, capture_output=True, timeout=300)
                 else:
                     subprocess.run(["docker", "restart", "dream-llama-server"],
                                    capture_output=True, timeout=300)
             else:
                 if compose_flags:
-                    subprocess.run(["docker", "compose"] + compose_flags + ["stop", "llama-server"],
-                                   cwd=str(INSTALL_DIR), capture_output=True, timeout=120)
-                    subprocess.run(["docker", "compose"] + compose_flags + ["up", "-d", "llama-server"],
-                                   cwd=str(INSTALL_DIR), capture_output=True, timeout=300)
+                    subprocess.run(["docker", "compose", "--project-directory", host_install_dir] + compose_flags + ["stop", "llama-server"],
+                                   cwd=host_install_dir, env=compose_env, capture_output=True, timeout=120)
+                    subprocess.run(["docker", "compose", "--project-directory", host_install_dir] + compose_flags + ["up", "-d", "llama-server"],
+                                   cwd=host_install_dir, env=compose_env, capture_output=True, timeout=300)
                 else:
                     subprocess.run(["docker", "stop", "dream-llama-server"], capture_output=True, timeout=120)
                     subprocess.run(["docker", "start", "dream-llama-server"], capture_output=True, timeout=300)
