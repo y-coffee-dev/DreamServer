@@ -1165,6 +1165,9 @@ def disable_extension(service_id: str, include_data_info: bool = Query(True), ap
 
         os.rename(str(enabled_compose), str(disabled_compose))
 
+        progress_file = Path(DATA_DIR) / "extension-progress" / f"{service_id}.json"
+        progress_file.unlink(missing_ok=True)
+
     logger.info("Disabled extension: %s", service_id)
 
     message = (
@@ -1223,6 +1226,9 @@ def uninstall_extension(service_id: str, include_data_info: bool = Query(True), 
         except OSError as e:
             logger.error("Failed to remove extension %s: %s", service_id, e)
             raise HTTPException(status_code=500, detail=f"Failed to remove extension files: {e}")
+
+        progress_file = Path(DATA_DIR) / "extension-progress" / f"{service_id}.json"
+        progress_file.unlink(missing_ok=True)
 
     logger.info("Uninstalled extension: %s", service_id)
     return {

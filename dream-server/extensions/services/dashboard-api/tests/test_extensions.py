@@ -632,6 +632,22 @@ class TestDisableExtension:
         assert (user_dir / "my-ext" / "compose.yaml.disabled").exists()
         assert not (user_dir / "my-ext" / "compose.yaml").exists()
 
+    def test_disable_unlinks_progress_file(self, test_client, monkeypatch, tmp_path):
+        """Disable removes the stale progress file so status reflects reality."""
+        user_dir = _setup_user_ext(tmp_path, "my-ext", enabled=True)
+        _patch_mutation_config(monkeypatch, tmp_path, user_dir=user_dir)
+        progress_file = tmp_path / "extension-progress" / "my-ext.json"
+        progress_file.parent.mkdir(parents=True, exist_ok=True)
+        progress_file.write_text('{"status": "started", "updated_at": "2026-04-10T00:00:00"}')
+
+        resp = test_client.post(
+            "/api/extensions/my-ext/disable",
+            headers=test_client.auth_headers,
+        )
+
+        assert resp.status_code == 200
+        assert not progress_file.exists()
+
     def test_disable_already_disabled_409(self, test_client, monkeypatch, tmp_path):
         """409 when extension is already disabled."""
         user_dir = _setup_user_ext(tmp_path, "my-ext", enabled=False)
@@ -716,6 +732,22 @@ class TestUninstallExtension:
         data = resp.json()
         assert data["action"] == "uninstalled"
         assert not (user_dir / "my-ext").exists()
+
+    def test_uninstall_unlinks_progress_file(self, test_client, monkeypatch, tmp_path):
+        """Uninstall removes the stale progress file so status reflects reality."""
+        user_dir = _setup_user_ext(tmp_path, "my-ext", enabled=False)
+        _patch_mutation_config(monkeypatch, tmp_path, user_dir=user_dir)
+        progress_file = tmp_path / "extension-progress" / "my-ext.json"
+        progress_file.parent.mkdir(parents=True, exist_ok=True)
+        progress_file.write_text('{"status": "started", "updated_at": "2026-04-10T00:00:00"}')
+
+        resp = test_client.delete(
+            "/api/extensions/my-ext",
+            headers=test_client.auth_headers,
+        )
+
+        assert resp.status_code == 200
+        assert not progress_file.exists()
 
     def test_uninstall_rejects_enabled_400(self, test_client, monkeypatch, tmp_path):
         """400 when extension is still enabled."""
