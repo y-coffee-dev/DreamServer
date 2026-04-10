@@ -175,10 +175,16 @@ for service_dir in _all_service_dirs:
         print(f'SERVICE_PORTS["{_esc(sid)}"]="{_esc(port)}"')
         print(f'SERVICE_PORT_ENVS["{_esc(sid)}"]="{_esc(port_env)}"')
         print(f'SERVICE_NAMES["{_esc(sid)}"]="{_esc(s.get("name", sid))}"')
-        setup_hook = s.get("setup_hook", "")
+        # Prefer hooks.post_install over legacy setup_hook
+        hooks = s.get("hooks", {})
+        effective_hook = ""
+        if isinstance(hooks, dict):
+            effective_hook = hooks.get("post_install", "")
+        if not effective_hook:
+            effective_hook = s.get("setup_hook", "")
         setup_path = ""
-        if setup_hook:
-            full = service_dir / setup_hook
+        if effective_hook:
+            full = service_dir / effective_hook
             if full.exists():
                 setup_path = str(full)
         print(f'SERVICE_SETUP_HOOKS["{_esc(sid)}"]="{_esc(setup_path)}"')

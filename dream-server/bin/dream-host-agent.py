@@ -21,10 +21,16 @@ from pathlib import Path
 from socketserver import ThreadingMixIn
 
 VERSION = "1.0.0"
+DREAM_VERSION = VERSION
 SERVICE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 MAX_BODY = 16384
 SUBPROCESS_TIMEOUT_START = 600  # 10 min — image pulls can be slow
 SUBPROCESS_TIMEOUT_STOP = 120   # 2 min — stop should be fast
+HOOK_TIMEOUT = 120              # 2 min — hook execution timeout
+VALID_HOOK_NAMES = frozenset({
+    "pre_install", "post_install", "pre_start", "post_start",
+    "pre_uninstall", "post_uninstall",
+})
 logger = logging.getLogger("dream-host-agent")
 
 # Hardcoded fallback — used when core-service-ids.json is missing or unreadable.
@@ -46,6 +52,7 @@ CORE_SERVICE_IDS: set = set()
 # Core services that can be toggled via the extension API (e.g., privacy shield)
 TOGGLABLE_CORE_SERVICES: set = {"privacy-shield"}
 USER_EXTENSIONS_DIR: Path = Path()
+EXTENSIONS_DIR: Path = Path()
 
 # Per-service locks to prevent concurrent start+stop races on the same service
 _service_locks: dict[str, threading.Lock] = collections.defaultdict(threading.Lock)
@@ -389,6 +396,101 @@ def _resolve_container_name(service_id: str) -> str:
     return f"dream-{service_id}"
 
 
+def _read_manifest(ext_dir: Path) -> dict | None:
+    """Read and return the parsed manifest from an extension directory."""
+    for name in ("manifest.yaml", "manifest.yml"):
+        candidate = ext_dir / name
+        if candidate.exists():
+            try:
+                import yaml
+                manifest = yaml.safe_load(candidate.read_text(encoding="utf-8"))
+                if isinstance(manifest, dict):
+                    return manifest
+            except ImportError:
+                logger.error("PyYAML not available on host")
+                return None  # no point trying other files without PyYAML
+            except (OSError, yaml.YAMLError) as exc:
+                logger.warning("Failed to read manifest %s: %s", candidate, exc)
+                continue  # try next candidate
+    return None
+
+
+def _validate_hook_path(ext_dir: Path, hook_script: str) -> Path | None:
+    """Resolve hook path and verify it stays inside ext_dir."""
+    hook_path = (ext_dir / hook_script).resolve()
+    try:
+        hook_path.relative_to(ext_dir.resolve())
+    except ValueError:
+        logger.warning("Path traversal attempt in hook for %s: %s", ext_dir.name, hook_script)
+        return None
+    if not hook_path.is_file():
+        return None
+    return hook_path
+
+
+def _resolve_hook(ext_dir: Path, hook_name: str) -> Path | None:
+    """Resolve a lifecycle hook script from an extension manifest.
+
+    Checks ``hooks`` map first, falls back to ``setup_hook`` for
+    ``post_install`` only.
+    """
+    manifest = _read_manifest(ext_dir)
+    if manifest is None:
+        return None
+    service_def = manifest.get("service", {})
+    if not isinstance(service_def, dict):
+        return None
+
+    # Check hooks map first
+    hooks = service_def.get("hooks", {})
+    if isinstance(hooks, dict):
+        hook_script = hooks.get(hook_name, "")
+        if isinstance(hook_script, str) and hook_script:
+            return _validate_hook_path(ext_dir, hook_script)
+
+    # Fallback: setup_hook -> post_install only
+    if hook_name == "post_install":
+        setup_hook = service_def.get("setup_hook", "")
+        if isinstance(setup_hook, str) and setup_hook:
+            return _validate_hook_path(ext_dir, setup_hook)
+
+    return None
+
+
+def _check_bash_version() -> tuple[bool, str]:
+    """On macOS, verify bash >= 4.0. Returns (ok, message)."""
+    if platform.system() != "Darwin":
+        return True, ""
+    try:
+        result = subprocess.run(
+            ["bash", "--version"],
+            capture_output=True, text=True, timeout=5,
+        )
+        # Parse "GNU bash, version X.Y.Z..."
+        import re as _re
+        match = _re.search(r"version (\d+)\.(\d+)", result.stdout)
+        if match:
+            major = int(match.group(1))
+            if major < 4:
+                return False, f"Bash {match.group(1)}.{match.group(2)} is too old (need 4.0+). Install via: brew install bash"
+        return True, ""
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        return False, f"Could not check bash version: {exc}"
+
+
+def _find_ext_dir(service_id: str) -> Path | None:
+    """Find extension directory for a service_id (user-installed or built-in)."""
+    # Check user extensions first
+    user_dir = USER_EXTENSIONS_DIR / service_id
+    if user_dir.is_dir():
+        return user_dir
+    # Check built-in extensions
+    builtin_dir = EXTENSIONS_DIR / service_id
+    if builtin_dir.is_dir():
+        return builtin_dir
+    return None
+
+
 class AgentHandler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         logger.info(fmt, *args)
@@ -486,6 +588,8 @@ class AgentHandler(BaseHTTPRequestHandler):
             self._handle_install()
         elif self.path == "/v1/extension/setup-hook":
             self._handle_setup_hook()
+        elif self.path == "/v1/extension/hooks":
+            self._handle_hook()
         elif self.path == "/v1/service/logs":
             self._handle_service_logs()
         elif self.path == "/v1/model/download":
@@ -663,6 +767,7 @@ class AgentHandler(BaseHTTPRequestHandler):
 
 
     def _handle_setup_hook(self):
+        """Backwards-compatible wrapper — delegates to hook resolution with post_install."""
         if not check_auth(self):
             return
         body = read_json_body(self)
@@ -672,73 +777,119 @@ class AgentHandler(BaseHTTPRequestHandler):
         if service_id is None:
             return
 
-        # Read manifest to find setup_hook field
-        ext_dir = USER_EXTENSIONS_DIR / service_id
-        manifest_path = None
-        for name in ("manifest.yaml", "manifest.yml"):
-            candidate = ext_dir / name
-            if candidate.exists():
-                manifest_path = candidate
-                break
-        if manifest_path is None:
-            json_response(self, 404, {"error": f"No manifest found for {service_id}"})
+        ext_dir = _find_ext_dir(service_id)
+        if ext_dir is None:
+            json_response(self, 404, {"error": f"Extension not found: {service_id}"})
             return
 
-        try:
-            import yaml
-            manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
-        except ImportError:
-            json_response(self, 500, {"error": "PyYAML not available on host"})
-            return
-        except (OSError, yaml.YAMLError) as exc:
-            json_response(self, 500, {"error": f"Failed to read manifest: {exc}"})
-            return
-
-        if not isinstance(manifest, dict):
-            json_response(self, 404, {"error": "Invalid manifest format"})
-            return
-        service_def = manifest.get("service", {})
-        if not isinstance(service_def, dict):
-            json_response(self, 404, {"error": "Invalid manifest: missing service section"})
-            return
-        setup_hook = service_def.get("setup_hook", "")
-        if not isinstance(setup_hook, str) or not setup_hook:
+        hook_path = _resolve_hook(ext_dir, "post_install")
+        if hook_path is None:
             json_response(self, 404, {"error": f"No setup_hook defined for {service_id}"})
             return
 
-        # Security: resolve hook path and verify it stays inside ext_dir
-        hook_path = (ext_dir / setup_hook).resolve()
-        try:
-            hook_path.relative_to(ext_dir.resolve())
-        except ValueError:
-            logger.warning("Path traversal attempt in setup_hook for %s: %s", service_id, setup_hook)
-            json_response(self, 400, {"error": "setup_hook path escapes extension directory"})
+        self._execute_hook(service_id, ext_dir, hook_path, "post_install")
+
+    def _handle_hook(self):
+        """Generic lifecycle hook endpoint: POST /v1/extension/hooks."""
+        if not check_auth(self):
             return
-        if not hook_path.is_file():
-            json_response(self, 404, {"error": f"setup_hook file not found: {setup_hook}"})
+        body = read_json_body(self)
+        if body is None:
             return
 
-        logger.info("Running setup_hook for %s: %s", service_id, hook_path)
+        # Validate service_id
+        sid = body.get("service_id", "")
+        if not isinstance(sid, str) or not SERVICE_ID_RE.match(sid):
+            json_response(self, 400, {"error": "Invalid service_id"})
+            return
+
+        # Validate hook name
+        hook_name = body.get("hook", "")
+        if not isinstance(hook_name, str) or hook_name not in VALID_HOOK_NAMES:
+            json_response(self, 400, {
+                "error": f"Invalid hook name. Must be one of: {', '.join(sorted(VALID_HOOK_NAMES))}",
+            })
+            return
+
+        ext_dir = _find_ext_dir(sid)
+        if ext_dir is None:
+            json_response(self, 404, {"error": f"Extension not found: {sid}"})
+            return
+
+        hook_path = _resolve_hook(ext_dir, hook_name)
+        if hook_path is None:
+            # No hook defined — not an error
+            json_response(self, 404, {"error": f"No {hook_name} hook defined for {sid}"})
+            return
+
+        self._execute_hook(sid, ext_dir, hook_path, hook_name)
+
+    def _execute_hook(self, service_id: str, ext_dir: Path, hook_path: Path, hook_name: str):
+        """Execute a resolved hook script with sandboxed environment."""
+        # macOS: validate bash version >= 4.0
+        bash_ok, bash_msg = _check_bash_version()
+        if not bash_ok:
+            json_response(self, 500, {"error": f"Cannot run hook: {bash_msg}"})
+            return
+
+        # Read manifest for service port
+        manifest = _read_manifest(ext_dir)
+        service_def = manifest.get("service", {}) if manifest else {}
+        if not isinstance(service_def, dict):
+            service_def = {}
+
+        # Minimal allowlist environment
+        hook_env = {
+            "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+            "HOME": os.environ.get("HOME", ""),
+            "SERVICE_ID": service_id,
+            "SERVICE_PORT": str(service_def.get("port", 0)),
+            "SERVICE_DATA_DIR": str(DATA_DIR / service_id),
+            "DREAM_VERSION": DREAM_VERSION,
+            "GPU_BACKEND": GPU_BACKEND,
+            "HOOK_NAME": hook_name,
+        }
+
+        logger.info("Running %s hook for %s: %s", hook_name, service_id, hook_path)
         try:
-            result = subprocess.run(
+            proc = subprocess.Popen(
                 ["bash", str(hook_path), str(INSTALL_DIR), GPU_BACKEND],
-                cwd=str(ext_dir),
-                capture_output=True, text=True, timeout=SUBPROCESS_TIMEOUT_STOP,
+                cwd=str(ext_dir), env=hook_env,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                preexec_fn=os.setsid,
             )
-            if result.returncode != 0:
-                logger.error("setup_hook failed for %s (exit %d): %s",
-                             service_id, result.returncode, result.stderr[:500])
+            try:
+                stdout, stderr = proc.communicate(timeout=HOOK_TIMEOUT)
+            except subprocess.TimeoutExpired:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                proc.wait()
+                json_response(self, 500, {"error": f"{hook_name} hook timed out ({HOOK_TIMEOUT}s)"})
+                return
+
+            if proc.returncode != 0:
+                logger.error("%s hook failed for %s (exit %d): %s",
+                             hook_name, service_id, proc.returncode, (stderr or b"").decode()[:500])
+                # post_start failure is non-terminal
+                if hook_name == "post_start":
+                    json_response(self, 200, {
+                        "status": "warning",
+                        "service_id": service_id,
+                        "hook": hook_name,
+                        "warning": f"post_start hook exited with code {proc.returncode}",
+                        "stderr": (stderr or b"").decode()[:500],
+                    })
+                    return
                 json_response(self, 500, {
-                    "error": f"setup_hook exited with code {result.returncode}",
-                    "stderr": result.stderr[:500],
+                    "error": f"{hook_name} hook exited with code {proc.returncode}",
+                    "stderr": (stderr or b"").decode()[:500],
                 })
                 return
-        except subprocess.TimeoutExpired:
-            json_response(self, 500, {"error": "setup_hook timed out (120s)"})
+        except OSError as exc:
+            json_response(self, 500, {"error": f"Failed to execute hook: {exc}"})
             return
 
-        logger.info("setup_hook completed for %s", service_id)
-        json_response(self, 200, {"status": "ok", "service_id": service_id})
+        logger.info("%s hook completed for %s", hook_name, service_id)
+        json_response(self, 200, {"status": "ok", "service_id": service_id, "hook": hook_name})
 
     def _handle_install(self):
         """Combined install: setup_hook → pull → start with progress tracking."""
@@ -1477,7 +1628,8 @@ class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
 
 
 def main():
-    global INSTALL_DIR, DATA_DIR, AGENT_API_KEY, GPU_BACKEND, TIER, CORE_SERVICE_IDS, USER_EXTENSIONS_DIR
+    global INSTALL_DIR, DATA_DIR, AGENT_API_KEY, GPU_BACKEND, TIER, CORE_SERVICE_IDS
+    global USER_EXTENSIONS_DIR, EXTENSIONS_DIR, DREAM_VERSION
 
     parser = argparse.ArgumentParser(description="DreamServer Host Agent")
     parser.add_argument("--port", type=int, default=7710, help="Listen port (default: 7710)")
@@ -1514,6 +1666,8 @@ def main():
         "DREAM_USER_EXTENSIONS_DIR",
         str(DATA_DIR / "user-extensions"),
     ))
+    EXTENSIONS_DIR = INSTALL_DIR / "extensions" / "services"
+    DREAM_VERSION = env.get("DREAM_VERSION", VERSION)
 
     port = args.port
     env_port = env.get("DREAM_AGENT_PORT", "")

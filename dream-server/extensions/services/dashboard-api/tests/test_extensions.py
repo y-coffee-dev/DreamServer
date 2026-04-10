@@ -572,7 +572,9 @@ class TestEnableExtension:
             headers=test_client.auth_headers,
         )
         assert resp.status_code == 400
-        assert "missing-dep" in resp.json()["detail"]
+        detail = resp.json()["detail"]
+        assert "missing-dep" in detail["missing_dependencies"]
+        assert detail["auto_enable_available"] is True
 
     def test_enable_core_service_403(self, test_client, monkeypatch, tmp_path):
         """403 when trying to enable a core service."""

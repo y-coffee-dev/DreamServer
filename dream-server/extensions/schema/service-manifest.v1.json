@@ -96,6 +96,19 @@
         "setup_hook": {
           "type": "string",
           "description": "Relative path to a setup script run during installation (e.g. setup.sh)"
+        },
+        "hooks": {
+          "type": "object",
+          "description": "Lifecycle hook scripts. Paths relative to extension directory.",
+          "properties": {
+            "pre_install": { "type": "string" },
+            "post_install": { "type": "string" },
+            "pre_start": { "type": "string" },
+            "post_start": { "type": "string" },
+            "pre_uninstall": { "type": "string" },
+            "post_uninstall": { "type": "string" }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": true

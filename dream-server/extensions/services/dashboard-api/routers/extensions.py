@@ -418,25 +418,34 @@ def _call_agent(action: str, service_id: str) -> bool:
 
 
 def _call_agent_setup_hook(service_id: str) -> bool:
-    """Call host agent to run setup_hook for an extension. Returns True on success."""
-    url = f"{AGENT_URL}/v1/extension/setup-hook"
+    """Call host agent to run setup_hook for an extension. Returns True on success.
+
+    Backwards-compatible wrapper — delegates to the generic hook endpoint
+    with hook_name="post_install".
+    """
+    return _call_agent_hook(service_id, "post_install")
+
+
+def _call_agent_hook(service_id: str, hook_name: str) -> bool:
+    """Call host agent to run a lifecycle hook. Returns True on success."""
+    url = f"{AGENT_URL}/v1/extension/hooks"
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {DREAM_AGENT_KEY}",
     }
-    data = json.dumps({"service_id": service_id}).encode()
+    data = json.dumps({"service_id": service_id, "hook": hook_name}).encode()
     req = urllib.request.Request(url, data=data, headers=headers, method="POST")
     try:
         with urllib.request.urlopen(req, timeout=_AGENT_TIMEOUT) as resp:
             return resp.status == 200
     except urllib.error.HTTPError as exc:
         if exc.code == 404:
-            # No setup_hook defined — not an error
+            # No hook defined — not an error
             return True
-        logger.warning("setup_hook failed for %s (HTTP %d)", service_id, exc.code)
+        logger.warning("%s hook failed for %s (HTTP %d)", hook_name, service_id, exc.code)
         return False
-    except Exception:
-        logger.warning("Host agent unreachable for setup_hook at %s", AGENT_URL)
+    except (urllib.error.URLError, OSError, TimeoutError):
+        logger.warning("Host agent unreachable for %s hook at %s", hook_name, AGENT_URL)
         return False
 
 
@@ -569,7 +578,16 @@ async def extensions_catalog(
         user_dir = USER_EXTENSIONS_DIR / ext_id
         source = "user" if user_dir.is_dir() else ("core" if ext_id in SERVICES else "library")
         has_data = (Path(DATA_DIR) / ext_id).is_dir()
-        enriched = {**ext, "status": status, "installable": installable, "source": source, "has_data": has_data}
+        enriched = {
+            **ext,
+            "status": status,
+            "installable": installable,
+            "source": source,
+            "has_data": has_data,
+            "depends_on": ext.get("depends_on", []),
+            "dependents": [],
+            "dependency_status": {},
+        }
 
         if category and ext.get("category") != category:
             continue
@@ -579,6 +597,26 @@ async def extensions_catalog(
                 continue
 
         extensions.append(enriched)
+
+    # Compute reverse dependency map and dependency status
+    dep_map: dict[str, list[str]] = {}
+    for e in extensions:
+        for dep in e.get("depends_on", []):
+            dep_map.setdefault(dep, []).append(e["id"])
+    ext_by_id = {e["id"]: e for e in extensions}
+    for e in extensions:
+        e["dependents"] = dep_map.get(e["id"], [])
+        dep_status = {}
+        for dep in e.get("depends_on", []):
+            dep_ext = ext_by_id.get(dep)
+            if dep_ext:
+                dep_status[dep] = dep_ext["status"]
+            elif dep in SERVICES:
+                svc = services_by_id.get(dep)
+                dep_status[dep] = "enabled" if (svc and svc.status == "healthy") else "disabled"
+            else:
+                dep_status[dep] = "unknown"
+        e["dependency_status"] = dep_status
 
     summary = {
         "total": len(extensions),
@@ -781,6 +819,11 @@ def install_extension(service_id: str, api_key: str = Depends(verify_api_key)):
                     detail="Extension exceeds maximum size of 50MB",
                 )
 
+    # NOTE: pre_install hook is deferred to a future version. On fresh library
+    # installs, the extension directory doesn't exist yet, so the host agent
+    # cannot resolve the hook script. The call site is intentionally omitted
+    # until the install flow can read manifests from the library source.
+
     # Atomic install via temp directory on same filesystem
     with _extensions_lock():
         # Re-check under lock to prevent double-install race
@@ -814,7 +857,10 @@ def install_extension(service_id: str, api_key: str = Depends(verify_api_key)):
     # (before host agent starts processing — closes the race window)
     _write_initial_progress(service_id)
 
-    # Call host agent combined install (setup_hook → pull → start)
+    # Call host agent combined install (setup_hook → pull → start).
+    # The setup_hook step internally satisfies the post_install lifecycle
+    # contract — _resolve_hook("post_install") falls back to manifest's
+    # setup_hook field, so we don't double-run it here.
     agent_ok = _call_agent_install(service_id)
 
     logger.info("Installed extension: %s", service_id)
@@ -830,9 +876,122 @@ def install_extension(service_id: str, api_key: str = Depends(verify_api_key)):
     }
 
 
+def _read_direct_deps(service_id: str) -> list[str]:
+    """Return direct depends_on list for a service from its manifest."""
+    ext_dir = USER_EXTENSIONS_DIR / service_id
+    manifest_path = None
+    for name in ("manifest.yaml", "manifest.yml"):
+        candidate = ext_dir / name
+        if candidate.exists():
+            manifest_path = candidate
+            break
+    if manifest_path is None:
+        return []
+    try:
+        manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+    except (yaml.YAMLError, OSError):
+        return []
+    if not isinstance(manifest, dict):
+        return []
+    svc = manifest.get("service", {})
+    depends_on = svc.get("depends_on", []) if isinstance(svc, dict) else []
+    if not isinstance(depends_on, list):
+        return []
+    return [d for d in depends_on if isinstance(d, str) and _SERVICE_ID_RE.match(d)]
+
+
+def _is_dep_satisfied(dep: str) -> bool:
+    """Check if a dependency is already enabled (core, built-in, or user)."""
+    if dep in CORE_SERVICE_IDS:
+        return True
+    if (EXTENSIONS_DIR / dep / "compose.yaml").exists():
+        return True
+    if (USER_EXTENSIONS_DIR / dep / "compose.yaml").exists():
+        return True
+    return False
+
+
+def _get_missing_deps_transitive(
+    service_id: str, *, _visiting: set | None = None, _order: list | None = None,
+) -> list[str]:
+    """Return all transitive missing deps in dependency order (leaves first).
+
+    Raises HTTPException on circular dependency.
+    """
+    if _visiting is None:
+        _visiting = set()
+    if _order is None:
+        _order = []
+
+    if service_id in _visiting:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Circular dependency detected involving: {service_id}",
+        )
+    _visiting.add(service_id)
+
+    for dep in _read_direct_deps(service_id):
+        if _is_dep_satisfied(dep):
+            continue
+        if dep in _order:
+            continue  # already queued from another branch
+        _get_missing_deps_transitive(dep, _visiting=_visiting, _order=_order)
+        _order.append(dep)
+
+    _visiting.discard(service_id)
+    return _order
+
+
+def _activate_service(service_id: str) -> dict:
+    """Core enable logic — NO lock acquisition. Called inside _extensions_lock.
+
+    Returns a result dict for the service. Cycle detection is handled
+    upstream by _get_missing_deps_transitive.
+    """
+    ext_dir = (USER_EXTENSIONS_DIR / service_id).resolve()
+    if not ext_dir.is_relative_to(USER_EXTENSIONS_DIR.resolve()):
+        raise HTTPException(
+            status_code=404, detail=f"Extension not found: {service_id}",
+        )
+    if not ext_dir.is_dir():
+        raise HTTPException(
+            status_code=404, detail=f"Extension not installed: {service_id}",
+        )
+
+    disabled_compose = ext_dir / "compose.yaml.disabled"
+    enabled_compose = ext_dir / "compose.yaml"
+
+    # Already enabled — skip silently (idempotent for dep chains)
+    if enabled_compose.exists():
+        return {"id": service_id, "action": "already_enabled"}
+
+    if not disabled_compose.exists():
+        raise HTTPException(
+            status_code=404, detail=f"Extension has no compose file: {service_id}",
+        )
+
+    # Re-scan compose content (TOCTOU prevention)
+    _scan_compose_content(disabled_compose)
+
+    # Reject symlinks
+    st = os.lstat(disabled_compose)
+    if stat.S_ISLNK(st.st_mode):
+        raise HTTPException(
+            status_code=400, detail="Compose file is a symlink",
+        )
+
+    os.rename(str(disabled_compose), str(enabled_compose))
+    logger.info("Enabled extension (activate): %s", service_id)
+    return {"id": service_id, "action": "enabled"}
+
+
 @router.post("/api/extensions/{service_id}/enable")
-def enable_extension(service_id: str, api_key: str = Depends(verify_api_key)):
-    """Enable an installed extension."""
+def enable_extension(
+    service_id: str,
+    auto_enable_deps: bool = Query(False),
+    api_key: str = Depends(verify_api_key),
+):
+    """Enable an installed extension, optionally auto-enabling dependencies."""
     _validate_service_id(service_id)
     _assert_not_core(service_id)
 
@@ -877,64 +1036,50 @@ def enable_extension(service_id: str, api_key: str = Depends(verify_api_key)):
             status_code=404, detail=f"Extension has no compose file: {service_id}",
         )
 
-    # Check dependencies from manifest
-    manifest_path = ext_dir / "manifest.yaml"
-    if manifest_path.exists():
-        try:
-            manifest = yaml.safe_load(
-                manifest_path.read_text(encoding="utf-8"),
-            )
-        except (yaml.YAMLError, OSError) as e:
-            logger.warning("Could not read manifest for %s: %s", service_id, e)
-            manifest = {}
-        depends_on = []
-        if isinstance(manifest, dict):
-            svc = manifest.get("service", {})
-            depends_on = svc.get("depends_on", []) if isinstance(svc, dict) else []
-            if not isinstance(depends_on, list):
-                depends_on = []
-        missing_deps = []
-        for dep in depends_on:
-            if not isinstance(dep, str) or not _SERVICE_ID_RE.match(dep):
-                continue
-            # Core services have compose in docker-compose.base.yml, not individual files
-            if dep in CORE_SERVICE_IDS:
-                continue
-            # Check built-in extensions
-            if (EXTENSIONS_DIR / dep / "compose.yaml").exists():
-                continue
-            # Check user extensions
-            if (USER_EXTENSIONS_DIR / dep / "compose.yaml").exists():
-                continue
-            missing_deps.append(dep)
-        if missing_deps:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Missing dependencies: {', '.join(missing_deps)}",
-            )
+    # Check dependencies (transitive — gathers full tree, detects cycles)
+    missing_deps = _get_missing_deps_transitive(service_id)
+    if missing_deps and not auto_enable_deps:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": f"Missing dependencies: {', '.join(missing_deps)}",
+                "missing_dependencies": missing_deps,
+                "auto_enable_available": True,
+            },
+        )
+
+    enabled_services: list[str] = []
 
     with _extensions_lock():
-        # Re-scan compose content inside lock (TOCTOU prevention —
-        # file contents could be modified between scan and rename)
-        compose_path = ext_dir / "compose.yaml.disabled"
-        if compose_path.exists():
-            _scan_compose_content(compose_path)
+        # Auto-enable missing deps first (already in dependency order — leaves first)
+        if missing_deps and auto_enable_deps:
+            for dep in missing_deps:
+                _validate_service_id(dep)
+                result = _activate_service(dep)
+                if result.get("action") == "enabled":
+                    enabled_services.append(dep)
 
-        # Reject symlinks (checked under lock to prevent TOCTOU)
-        st = os.lstat(disabled_compose)
-        if stat.S_ISLNK(st.st_mode):
-            raise HTTPException(
-                status_code=400, detail="Compose file is a symlink",
-            )
+        # Enable the target service
+        result = _activate_service(service_id)
+        if result.get("action") == "enabled":
+            enabled_services.append(service_id)
 
-        os.rename(str(disabled_compose), str(enabled_compose))
+    # Start all enabled services via agent (outside lock)
+    agent_ok = True
+    for svc_id in enabled_services:
+        _call_agent_hook(svc_id, "pre_start")
+        if not _call_agent("start", svc_id):
+            agent_ok = False
+        # post_start is non-terminal — log failure but don't fail the enable
+        if not _call_agent_hook(svc_id, "post_start"):
+            logger.warning("post_start hook failed for %s (non-fatal)", svc_id)
 
-    agent_ok = _call_agent("start", service_id)
-
-    logger.info("Enabled extension: %s", service_id)
+    logger.info("Enabled extension: %s (deps: %s)", service_id,
+                enabled_services[:-1] if len(enabled_services) > 1 else "none")
     return {
         "id": service_id,
         "action": "enabled",
+        "enabled_services": enabled_services,
         "restart_required": not agent_ok,
         "message": (
             "Extension enabled and started." if agent_ok

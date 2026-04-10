@@ -127,6 +127,10 @@ def load_extension_manifests(
                     "name": service.get("name", service_id),
                     "ui_path": service.get("ui_path", "/"),
                     "container_name": service.get("container_name", f"dream-{service_id}"),
+                    "depends_on": service.get("depends_on", []),
+                    "category": service.get("category", "optional"),
+                    "setup_hook": service.get("setup_hook", ""),
+                    "hooks": service.get("hooks", {}),
                     **({"type": service["type"]} if "type" in service else {}),
                     **({"health_port": int(service["health_port"])} if "health_port" in service else {}),
                 }

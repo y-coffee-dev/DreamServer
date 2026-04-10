@@ -4,6 +4,7 @@ import {
   Box, Loader2, RefreshCw, ChevronDown, ChevronUp, Package, Info, X, Download, Trash2, ExternalLink, Terminal, Copy, Check,
 } from 'lucide-react'
 import { useState, useEffect, useRef } from 'react'
+import { DependencyBadges, DependencyConfirmDialog, DisableDependentWarning } from '../components/DependencyBadges'
 
 // Auth: nginx injects "Authorization: Bearer ${DASHBOARD_API_KEY}" via
 // proxy_set_header for all /api/ requests (see nginx.conf).  All fetches
@@ -71,6 +72,7 @@ export default function Extensions() {
   const [consoleExt, setConsoleExt] = useState(null)
   const [refreshing, setRefreshing] = useState(false)
   const [progressMap, setProgressMap] = useState({})
+  const [depConfirm, setDepConfirm] = useState(null)
   const installProgressRef = useRef(null)
   const activePollers = useRef({})
 
@@ -161,16 +163,19 @@ export default function Extensions() {
     }
   }
 
-  const handleMutation = async (serviceId, action) => {
+  const handleMutation = async (serviceId, action, { autoEnableDeps = false } = {}) => {
     setMutating(serviceId)
     setConfirm(null)
-
+    setDepConfirm(null)
     try {
-      const url = action === 'uninstall'
+      let url = action === 'uninstall'
         ? `/api/extensions/${serviceId}`
         : action === 'purge'
         ? `/api/extensions/${serviceId}/data`
         : `/api/extensions/${serviceId}/${action}`
+      if (action === 'enable' && autoEnableDeps) {
+        url += '?auto_enable_deps=true'
+      }
       const opts = {
         method: action === 'uninstall' || action === 'purge' ? 'DELETE' : 'POST',
         signal: AbortSignal.timeout(300000),
@@ -182,7 +187,15 @@ export default function Extensions() {
       const res = await fetch(url, opts)
       if (!res.ok) {
         const err = await res.json().catch(() => ({}))
-        throw new Error(err.detail || `Failed to ${action}`)
+        const detail = err.detail
+        // Handle missing dependencies response
+        if (action === 'enable' && res.status === 400 && detail?.missing_dependencies) {
+          const ext = extensions.find(e => e.id === serviceId)
+          setMutating(null)
+          setDepConfirm({ ext, missingDeps: detail.missing_dependencies })
+          return
+        }
+        throw new Error((typeof detail === 'string' ? detail : detail?.message) || `Failed to ${action}`)
       }
       const data = await res.json()
 
@@ -399,7 +412,10 @@ export default function Extensions() {
               {confirm.action === 'uninstall' ? 'Remove' : confirm.action === 'purge' ? 'Purge Data —' : confirm.action.charAt(0).toUpperCase() + confirm.action.slice(1)} Extension
             </h3>
             <p className="text-sm text-theme-text-muted mb-4">{confirm.message}</p>
-            <div className="flex justify-end gap-3">
+            {confirm.action === 'disable' && confirm.ext.dependents?.length > 0 && (
+              <DisableDependentWarning dependents={confirm.ext.dependents} />
+            )}
+            <div className="flex justify-end gap-3 mt-4">
               <button onClick={() => setConfirm(null)} autoFocus className="px-4 py-2 text-sm text-theme-text-muted hover:text-theme-text transition-colors">Cancel</button>
               <button
                 onClick={() => handleMutation(confirm.ext.id, confirm.action)}
@@ -413,6 +429,16 @@ export default function Extensions() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Dependency auto-enable dialog */}
+      {depConfirm && (
+        <DependencyConfirmDialog
+          ext={depConfirm.ext}
+          missingDeps={depConfirm.missingDeps}
+          onConfirm={() => handleMutation(depConfirm.ext.id, 'enable', { autoEnableDeps: true })}
+          onCancel={() => setDepConfirm(null)}
+        />
       )}
 
       {/* Toast notification */}
@@ -462,11 +488,11 @@ function ExtensionCard({ ext, gpuBackend, agentAvailable, onDetails, onConsole, 
   const showInstall = status === 'not_installed' && ext.installable
 
   return (
-    <div className={`bg-theme-card border rounded-xl transition-all liquid-metal-frame liquid-metal-sequence-card ${
+    <div className={`bg-theme-card border rounded-xl transition-all liquid-metal-frame liquid-metal-sequence-card flex flex-col ${
       isCore ? 'border-theme-border/60 opacity-70' : 'border-theme-border'
     }`}>
       {/* Card body */}
-      <div className="p-4 pb-3">
+      <div className="p-4 pb-3 flex-1">
         <div className="flex items-start justify-between mb-2">
           <div className="flex items-center gap-2.5">
             <div className={`p-1.5 rounded-lg ${
@@ -615,16 +641,9 @@ function ExtensionCard({ ext, gpuBackend, agentAvailable, onDetails, onConsole, 
           {isUserExt && status === 'enabled' && (
             <span className="text-[10px] text-theme-text-muted">Disable to remove</span>
           )}
-          {!showInstall && !showRemove && !isToggleable && (
-            <div className="flex items-center gap-1" title={status === 'incompatible' && gpuBackend ? `Your system: ${gpuBackend}` : undefined}>
-              {status === 'incompatible' && <span className="text-[10px] text-theme-text-muted mr-0.5">Requires:</span>}
-              {ext.gpu_backends?.slice(0, 3).map(gpu => (
-                <span key={gpu} className="text-[10px] px-1.5 py-0.5 rounded bg-theme-card/80 text-theme-text-muted">{gpu}</span>
-              ))}
-            </div>
-          )}
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-2">
+          <DependencyBadges dependsOn={ext.depends_on} dependencyStatus={ext.dependency_status} />
           {status === 'enabled' && (ext.external_port_default || ext.port) && (ext.external_port_default || ext.port) !== 0 ? (
             <a
               href={`http://${window.location.hostname}:${ext.external_port_default || ext.port}`}

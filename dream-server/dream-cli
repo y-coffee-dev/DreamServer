@@ -291,6 +291,80 @@ _regenerate_compose_flags() {
     fi
 }
 
+# Run a lifecycle hook for a service (reads manifest directly via Python)
+_run_hook() {
+    local service_id="$1" hook_name="$2"
+    local ext_dir="$INSTALL_DIR/extensions/services/$service_id"
+    # Also check user-extensions
+    [[ -d "$ext_dir" ]] || ext_dir="$INSTALL_DIR/data/user-extensions/$service_id"
+    [[ -d "$ext_dir" ]] || return 0
+
+    local hook_path
+    hook_path=$(python3 - "$ext_dir" "$hook_name" <<'PYEOF'
+import yaml, sys
+from pathlib import Path
+
+ext_dir = Path(sys.argv[1])
+hook_name = sys.argv[2]
+
+manifest_path = None
+for name in ("manifest.yaml", "manifest.yml"):
+    candidate = ext_dir / name
+    if candidate.exists():
+        manifest_path = candidate
+        break
+if manifest_path is None:
+    sys.exit(0)
+
+with open(manifest_path) as f:
+    m = yaml.safe_load(f)
+if not isinstance(m, dict):
+    sys.exit(0)
+service = m.get("service", {})
+if not isinstance(service, dict):
+    sys.exit(0)
+
+# Check hooks map first
+hooks = service.get("hooks", {})
+hook_script = ""
+if isinstance(hooks, dict):
+    hook_script = hooks.get(hook_name, "")
+
+# Fallback: setup_hook -> post_install only
+if not hook_script and hook_name == "post_install":
+    hook_script = service.get("setup_hook", "")
+
+if not hook_script:
+    sys.exit(0)
+
+# Validate path containment
+hook_path = (ext_dir / hook_script).resolve()
+try:
+    hook_path.relative_to(ext_dir.resolve())
+except ValueError:
+    print(f"ERROR: hook path escapes extension directory: {hook_script}", file=sys.stderr)
+    sys.exit(1)
+
+if not hook_path.is_file():
+    sys.exit(0)
+
+print(str(hook_path))
+PYEOF
+    ) || return 0
+
+    [[ -z "$hook_path" || ! -f "$hook_path" ]] && return 0
+
+    log "Running $hook_name hook for $service_id..."
+    SERVICE_ID="$service_id" \
+    SERVICE_PORT="${SERVICE_PORTS[$service_id]:-0}" \
+    SERVICE_DATA_DIR="$INSTALL_DIR/data/$service_id" \
+    DREAM_VERSION="$VERSION" \
+    GPU_BACKEND="${GPU_BACKEND:-}" \
+    HOOK_NAME="$hook_name" \
+        bash "$hook_path" "$INSTALL_DIR" "${GPU_BACKEND:-}" \
+        || warn "$hook_name hook failed for $service_id (non-fatal)"
+}
+
 # Build full compose flags: base + GPU overlay + enabled extensions
 get_compose_flags() {
     # Fast path: use saved flags from installer if available
@@ -610,6 +684,7 @@ cmd_start() {
     check_install
     cd "$INSTALL_DIR"
     load_env
+    sr_load
 
     local service="${1:-}"
     local flags_str
@@ -623,9 +698,11 @@ cmd_start() {
         success "All services started"
     else
         service=$(resolve_service "$service")
+        _run_hook "$service" "pre_start"
         log "Starting $service..."
         docker compose "${flags[@]}" up -d "$service"
         success "$service started"
+        _run_hook "$service" "post_start"
     fi
 }
 
