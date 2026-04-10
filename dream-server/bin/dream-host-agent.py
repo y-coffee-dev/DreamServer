@@ -22,7 +22,7 @@ from socketserver import ThreadingMixIn
 
 VERSION = "1.0.0"
 SERVICE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
-MAX_BODY = 4096
+MAX_BODY = 16384
 SUBPROCESS_TIMEOUT_START = 600  # 10 min — image pulls can be slow
 SUBPROCESS_TIMEOUT_STOP = 120   # 2 min — stop should be fast
 logger = logging.getLogger("dream-host-agent")
@@ -767,10 +767,17 @@ class AgentHandler(BaseHTTPRequestHandler):
             try:
                 lib = json.loads(library_path.read_text(encoding="utf-8"))
                 for m in lib.get("models", []):
-                    if m.get("gguf_file") == gguf_file:
-                        if m.get("gguf_url") == gguf_url or m.get("gguf_parts"):
+                    if m.get("gguf_file") != gguf_file:
+                        continue
+                    if gguf_parts:
+                        # Verify every (file, url) in the request matches the library
+                        lib_parts = {(p["file"], p["url"]) for p in m.get("gguf_parts", [])}
+                        req_parts = set(download_plan)
+                        if req_parts and req_parts <= lib_parts:
                             allowed = True
-                            break
+                    elif m.get("gguf_url") == gguf_url:
+                        allowed = True
+                    break
             except (json.JSONDecodeError, OSError):
                 pass
         if not allowed:
@@ -1038,7 +1045,11 @@ class AgentHandler(BaseHTTPRequestHandler):
                 logger.warning("Model activation failed — rolling back")
                 env_path.write_text(env_backup, encoding="utf-8")
                 models_ini.write_text(ini_backup, encoding="utf-8")
-                _recreate_llama_server(load_env(env_path))
+                if gpu_backend == "amd":
+                    subprocess.run(["docker", "restart", "dream-llama-server"],
+                                   capture_output=True, timeout=300)
+                else:
+                    _recreate_llama_server(load_env(env_path))
                 json_response(self, 500, {"error": "Health check failed — rolled back to previous model", "rolled_back": True})
 
         except Exception as exc:
@@ -1076,7 +1087,25 @@ class AgentHandler(BaseHTTPRequestHandler):
             return
 
         try:
-            target.unlink()
+            # For split models, delete all part files
+            library_path = INSTALL_DIR / "config" / "model-library.json"
+            parts_to_delete = [target]
+            if library_path.exists():
+                try:
+                    lib = json.loads(library_path.read_text(encoding="utf-8"))
+                    for m in lib.get("models", []):
+                        if m.get("gguf_file") == gguf_file and m.get("gguf_parts"):
+                            parts_to_delete = []
+                            for p in m["gguf_parts"]:
+                                pf = (models_dir / p["file"]).resolve()
+                                if pf.is_relative_to(models_dir.resolve()) and pf.exists():
+                                    parts_to_delete.append(pf)
+                            break
+                except (json.JSONDecodeError, OSError):
+                    pass
+
+            for pf in parts_to_delete:
+                pf.unlink()
             json_response(self, 200, {"status": "deleted", "gguf_file": gguf_file})
         except OSError as exc:
             json_response(self, 500, {"error": f"Failed to delete: {exc}"})
@@ -1187,7 +1216,7 @@ def _recreate_llama_server(env: dict):
             count = dr.get("Count", 0)
             device_ids = dr.get("DeviceIDs") or []
             if device_ids:
-                run_cmd += ["--gpus", f'"device={",".join(device_ids)}"']
+                run_cmd += ["--gpus", f'device={",".join(device_ids)}']
             elif count == -1:
                 run_cmd += ["--gpus", "all"]
             else:
