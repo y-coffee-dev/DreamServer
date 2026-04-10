@@ -996,21 +996,26 @@ class AgentHandler(BaseHTTPRequestHandler):
             env = load_env(env_path)
             gpu_backend = env.get("GPU_BACKEND", "nvidia")
 
-            if gpu_backend == "amd":
-                # AMD uses `restart` which preserves the container (no path issue)
-                subprocess.run(["docker", "restart", "dream-llama-server"],
-                               capture_output=True, timeout=300)
-            else:
-                _recreate_llama_server(env)
+            # Recreate llama-server with the new model.
+            # docker restart does NOT work — it preserves the old --model
+            # command arg since ${GGUF_FILE} is interpolated at create time.
+            override_image = model.get("llama_server_image") or ""
+            _recreate_llama_server(env, override_image=override_image)
 
             # Health check (up to 5 min)
             # Use container name on docker network (localhost is the agent
             # container when running containerized, not the llama-server).
             import time
-            llama_host = "dream-llama-server"
-            # Always use internal container port 8080 (OLLAMA_PORT is the
-            # host-mapped port which isn't reachable from inside the network)
-            llama_port = "8080"
+            # Determine health check URL based on where the agent runs:
+            # - Inside a container (DREAM_HOST_INSTALL_DIR set): use docker
+            #   network name + internal port 8080
+            # - On the host (native systemd): use localhost + OLLAMA_PORT
+            if os.environ.get("DREAM_HOST_INSTALL_DIR"):
+                llama_host = "dream-llama-server"
+                llama_port = "8080"
+            else:
+                llama_host = "localhost"
+                llama_port = env.get("OLLAMA_PORT", "8080")
             health_path = "/api/v1/health" if gpu_backend == "amd" else "/health"
             health_url = f"http://{llama_host}:{llama_port}{health_path}"
             logger.info("Waiting for llama-server health at %s", health_url)
@@ -1045,11 +1050,7 @@ class AgentHandler(BaseHTTPRequestHandler):
                 logger.warning("Model activation failed — rolling back")
                 env_path.write_text(env_backup, encoding="utf-8")
                 models_ini.write_text(ini_backup, encoding="utf-8")
-                if gpu_backend == "amd":
-                    subprocess.run(["docker", "restart", "dream-llama-server"],
-                                   capture_output=True, timeout=300)
-                else:
-                    _recreate_llama_server(load_env(env_path))
+                _recreate_llama_server(load_env(env_path))
                 json_response(self, 500, {"error": "Health check failed — rolled back to previous model", "rolled_back": True})
 
         except Exception as exc:
@@ -1111,12 +1112,15 @@ class AgentHandler(BaseHTTPRequestHandler):
             json_response(self, 500, {"error": f"Failed to delete: {exc}"})
 
 
-def _recreate_llama_server(env: dict):
+def _recreate_llama_server(env: dict, override_image: str = ""):
     """Recreate llama-server container with updated model from .env.
 
     Instead of docker compose (which breaks relative volume mounts when
     run from inside a container), we inspect the existing container and
     create a new one with the same config but updated --model and --ctx-size.
+
+    If override_image is set, use that image instead of the existing one
+    (e.g., Gemma 4 models need a different llama.cpp build).
     """
     container = "dream-llama-server"
     gguf_file = env.get("GGUF_FILE", "")
@@ -1153,7 +1157,7 @@ def _recreate_llama_server(env: dict):
         else:
             new_cmd.append(arg)
 
-    image = config["Config"]["Image"]
+    image = override_image or config["Config"]["Image"]
     host_config = config["HostConfig"]
 
     # Stop and remove old container
