@@ -12,7 +12,7 @@
 #           show_phase(), show_install_menu(), chapter(), bootline(),
 #           success(), log(), warn(), error(), signal()
 # Provides: ENABLE_VOICE, ENABLE_WORKFLOWS, ENABLE_RAG, ENABLE_OPENCLAW,
-#           OPENCLAW_CONFIG, GPU_ASSIGNMENT_JSON,
+#           ENABLE_CLUSTER, OPENCLAW_CONFIG, GPU_ASSIGNMENT_JSON,
 #           LLAMA_SERVER_GPU_UUIDS, WHISPER_GPU_UUID, COMFYUI_GPU_UUID,
 #           EMBEDDINGS_GPU_UUID, LLAMA_ARG_SPLIT_MODE, LLAMA_ARG_TENSOR_SPLIT
 #
@@ -50,6 +50,10 @@ if $INTERACTIVE && ! $DRY_RUN; then
         read -p "  Enable DreamForge agent system? [Y/n] " -r < /dev/tty
         echo
         [[ $REPLY =~ ^[Nn]$ ]] || ENABLE_DREAMFORGE=true
+
+        read -p "  Enable LAN cluster mode (pool GPUs across machines)? [y/N] " -r < /dev/tty
+        echo
+        [[ $REPLY =~ ^[Yy]$ ]] && ENABLE_CLUSTER=true
 
         # Warn if ComfyUI enabled on low-tier hardware
         if [[ "$ENABLE_COMFYUI" == "true" ]]; then
