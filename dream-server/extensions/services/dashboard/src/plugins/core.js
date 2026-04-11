@@ -4,12 +4,14 @@ import {
   Settings,
   Puzzle,
   Activity,
+  Network,
 } from 'lucide-react'
 
 const Dashboard = lazy(() => import('../pages/Dashboard'))
 const SettingsPage = lazy(() => import('../pages/Settings'))
 const Extensions = lazy(() => import('../pages/Extensions'))
 const GPUMonitor = lazy(() => import('../pages/GPUMonitor'))
+const ClusterMonitor = lazy(() => import('../pages/ClusterMonitor'))
 
 export const coreRoutes = [
   {
@@ -32,6 +34,16 @@ export const coreRoutes = [
     // Route is always registered; sidebar entry only appears on multi-GPU systems
     sidebar: ({ status }) => (status?.gpu?.gpu_count || 1) > 1,
     order: 1,
+  },
+  {
+    id: 'cluster',
+    path: '/cluster',
+    label: 'LAN Cluster',
+    icon: Network,
+    component: ClusterMonitor,
+    getProps: () => ({}),
+    sidebar: ({ status }) => status?.cluster_enabled === true,
+    order: 2,
   },
   {
     id: 'extensions',
