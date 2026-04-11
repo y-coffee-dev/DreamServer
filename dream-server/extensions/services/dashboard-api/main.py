@@ -52,6 +52,7 @@ from agent_monitor import collect_metrics
 from routers import (
     workflows, features, setup, updates, agents, privacy, extensions,
     gpu as gpu_router, resources, voice, models as models_router, templates,
+    cluster as cluster_router,
 )
 
 
@@ -909,6 +910,7 @@ app.include_router(resources.router)
 app.include_router(voice.router)
 app.include_router(models_router.router)
 app.include_router(templates.router)
+app.include_router(cluster_router.router)
 
 
 # ================================================================
@@ -1070,7 +1072,8 @@ async def status(api_key: str = Depends(verify_api_key)):
         timestamp=datetime.now(timezone.utc).isoformat(),
         gpu=gpu_info, services=service_statuses,
         disk=disk_info, model=model_info,
-        bootstrap=bootstrap_info, uptime_seconds=uptime
+        bootstrap=bootstrap_info, uptime_seconds=uptime,
+        cluster_enabled=os.environ.get("CLUSTER_ENABLED", "").lower() == "true",
     )
 
 
@@ -1097,6 +1100,7 @@ async def api_status(api_key: str = Depends(verify_api_key)):
             "inference": {"tokensPerSecond": 0, "lifetimeTokens": 0,
                           "loadedModel": None, "contextSize": None},
             "manifest_errors": MANIFEST_ERRORS,
+            "cluster_enabled": False,
         }
 
 
@@ -1205,6 +1209,7 @@ async def _build_api_status() -> dict:
             "contextSize": context_size or (model_data["contextLength"] if model_data else None),
         },
         "manifest_errors": MANIFEST_ERRORS,
+        "cluster_enabled": os.environ.get("CLUSTER_ENABLED", "").lower() == "true",
     }
     return result
 
@@ -1471,6 +1476,7 @@ async def startup_event():
     asyncio.create_task(collect_metrics())
     asyncio.create_task(_poll_service_health())
     asyncio.create_task(gpu_router.poll_gpu_history())
+    asyncio.create_task(cluster_router.poll_cluster_health())
 
 
 if __name__ == "__main__":
