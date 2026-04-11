@@ -395,6 +395,8 @@ resolve_service() {
 # Regenerate .compose-flags after enable/disable
 _regenerate_compose_flags() {
     if [[ -x "$INSTALL_DIR/scripts/resolve-compose-stack.sh" ]]; then
+        # Re-load .env so vars written by _env_set are exported to the resolver subprocess
+        load_env
         "$INSTALL_DIR/scripts/resolve-compose-stack.sh" \
             --script-dir "$INSTALL_DIR" --tier "${TIER:-1}" --gpu-backend "${GPU_BACKEND:-nvidia}" \
             > "$INSTALL_DIR/.compose-flags" 2>/dev/null || rm -f "$INSTALL_DIR/.compose-flags"
