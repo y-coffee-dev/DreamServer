@@ -779,12 +779,12 @@ cmd_restart() {
 
     if [[ -z "$service" ]]; then
         log "Restarting all services..."
-        docker compose "${flags[@]}" up -d
+        docker compose "${flags[@]}" up -d --force-recreate
         success "All services restarted"
     else
         service=$(resolve_service "$service")
         log "Restarting $service..."
-        docker compose "${flags[@]}" up -d "$service"
+        docker compose "${flags[@]}" up -d --force-recreate "$service"
         success "$service restarted"
     fi
 }
@@ -2564,22 +2564,23 @@ print(json.dumps(state, indent=2))
 ")
     _cluster_save_state "$state"
 
-    # Write env vars
-    _env_set "CLUSTER_ENABLED" "true"
-    _env_set "CLUSTER_TOKEN" "$token"
-    _env_set "CLUSTER_WORKERS" ""
-    _env_set "CLUSTER_TENSOR_SPLIT" ""
-
-    # Regenerate compose flags to pick up cluster overlay
-    _regenerate_compose_flags
-
-    # Check that the controller image was built at install time
+    # Determine controller image tag based on GPU backend
     local image_tag="dream-llama-rpc:cuda"
     if [[ "$gpu_backend" == "amd" ]]; then
         image_tag="dream-llama-rpc:rocm"
     elif [[ "$gpu_backend" == "cpu" ]]; then
         image_tag="dream-llama-rpc:cpu"
     fi
+
+    # Write env vars
+    _env_set "CLUSTER_ENABLED" "true"
+    _env_set "CLUSTER_TOKEN" "$token"
+    _env_set "CLUSTER_WORKERS" ""
+    _env_set "CLUSTER_TENSOR_SPLIT" ""
+    _env_set "CLUSTER_CONTROLLER_IMAGE" "$image_tag"
+
+    # Regenerate compose flags to pick up cluster overlay
+    _regenerate_compose_flags
 
     local _ctrl_dockerfile="Dockerfile.cuda"
     case "$gpu_backend" in
