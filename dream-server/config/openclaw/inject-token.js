@@ -199,6 +199,9 @@ try {
     // into ~/.openclaw/openclaw.json but that write may fail (EACCES on
     // Docker volume), so we must also set them here in the merged config.
     if (!primary.gateway) primary.gateway = {};
+    // gateway.mode is required by OpenClaw v2026.3.8+; without it the
+    // gateway refuses to start.
+    if (!primary.gateway.mode) primary.gateway.mode = 'local';
     if (!primary.gateway.controlUi) primary.gateway.controlUi = {};
     primary.gateway.controlUi.allowInsecureAuth = true;
     primary.gateway.controlUi.dangerouslyDisableDeviceAuth = true;
