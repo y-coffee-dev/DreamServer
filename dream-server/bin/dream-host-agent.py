@@ -1314,9 +1314,8 @@ class AgentHandler(BaseHTTPRequestHandler):
 
             # Regenerate LiteLLM lemonade config so it routes to the new model.
             # Only written on AMD installs where lemonade.yaml exists.
-            litellm_cfg = install_dir / "config" / "litellm" / "lemonade.yaml"
-            if litellm_cfg.exists():
-                litellm_cfg.write_text(
+            if lemonade_yaml.exists():
+                lemonade_yaml.write_text(
                     f"model_list:\n"
                     f"  - model_name: default\n"
                     f"    litellm_params:\n"
