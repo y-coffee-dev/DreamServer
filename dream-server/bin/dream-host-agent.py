@@ -111,6 +111,33 @@ def load_core_service_ids(config_path: Path) -> set:
         return set(_FALLBACK_CORE_IDS)
 
 
+def _detect_docker_bridge_gateway() -> str:
+    """Detect the Docker bridge gateway IP for secure binding on Linux.
+
+    Returns the gateway IP (e.g. '172.17.0.1') or empty string on failure.
+    Containers reach this IP via the host-gateway extra_hosts mapping,
+    while LAN devices cannot (it's on a virtual bridge interface).
+    """
+    import ipaddress as _ipaddress
+    try:
+        result = subprocess.run(
+            ["docker", "network", "inspect", "bridge",
+             "--format", "{{(index .IPAM.Config 0).Gateway}}"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode == 0:
+            addr = result.stdout.strip()
+            if addr:
+                _ipaddress.ip_address(addr)  # validate — Docker can return "<no value>"
+                logger.info("Detected Docker bridge gateway: %s", addr)
+                return addr
+    except ValueError:
+        logger.debug("Docker bridge returned non-IP value, ignoring")
+    except (subprocess.SubprocessError, OSError) as exc:
+        logger.debug("Docker bridge detection failed: %s", exc)
+    return ""
+
+
 def invalidate_compose_cache() -> None:
     """Drop the saved .compose-flags cache so the next resolve re-runs the script."""
     (INSTALL_DIR / ".compose-flags").unlink(missing_ok=True)
@@ -1831,17 +1858,24 @@ def main():
 
     # Determine bind address: env var override, or platform-aware default.
     # macOS/Windows: 127.0.0.1 (Docker Desktop routes host.docker.internal to loopback)
-    # Linux: 0.0.0.0 (host.docker.internal resolves to Docker bridge gateway, not loopback)
+    # Linux: Docker bridge gateway IP (containers reach via host-gateway,
+    #   LAN devices cannot — the bridge is a virtual interface).
+    #   Falls back to 0.0.0.0 if detection fails.
     bind_addr = env.get("DREAM_AGENT_BIND", "")
+    bind_from_env = bool(bind_addr)
     if not bind_addr:
-        bind_addr = "127.0.0.1" if platform.system() in ("Darwin", "Windows") else "0.0.0.0"
+        if platform.system() in ("Darwin", "Windows"):
+            bind_addr = "127.0.0.1"
+        else:
+            bind_addr = _detect_docker_bridge_gateway() or "0.0.0.0"
 
     server = ThreadedHTTPServer((bind_addr, port), AgentHandler)
     signal.signal(signal.SIGTERM, lambda *_: server.shutdown())
     logger.info("Dream Host Agent v%s listening on %s:%d", VERSION, bind_addr, port)
-    if bind_addr == "0.0.0.0":
+    if bind_addr == "0.0.0.0" and not bind_from_env:
         logger.warning(
-            "Agent is listening on all interfaces. Set DREAM_AGENT_BIND=127.0.0.1 in .env to restrict."
+            "Agent is listening on all interfaces (bridge detection failed). "
+            "Set DREAM_AGENT_BIND=<bridge-ip> in .env to restrict."
         )
     logger.info("Install dir: %s | GPU: %s | Tier: %s", INSTALL_DIR, GPU_BACKEND, TIER)
     try:
