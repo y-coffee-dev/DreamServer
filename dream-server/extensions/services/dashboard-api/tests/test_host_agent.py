@@ -165,6 +165,57 @@ class TestComposeCacheInvalidationWire:
             thread.join(timeout=2)
 
 
+class TestComposeToggleWire:
+    """End-to-end HTTP test for built-in compose toggles via the host agent."""
+
+    def test_client_posts_to_host_agent_and_renames_builtin_compose(
+        self, tmp_path, monkeypatch,
+    ):
+        import threading
+        from http.server import HTTPServer
+
+        from routers import extensions as ext_router
+
+        builtin_root = tmp_path / "builtin"
+        user_root = tmp_path / "user"
+        builtin_root.mkdir()
+        user_root.mkdir()
+        ext_dir = builtin_root / "fakesvc"
+        ext_dir.mkdir()
+        (ext_dir / "compose.yaml.disabled").write_text(
+            "services:\n  svc:\n    image: test:latest\n",
+            encoding="utf-8",
+        )
+
+        monkeypatch.setattr(_mod, "EXTENSIONS_DIR", builtin_root)
+        monkeypatch.setattr(_mod, "USER_EXTENSIONS_DIR", user_root)
+        monkeypatch.setattr(_mod, "AGENT_API_KEY", "wire-test-secret")
+
+        server = HTTPServer(("127.0.0.1", 0), _mod.AgentHandler)
+        port = server.server_address[1]
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            monkeypatch.setattr(ext_router, "AGENT_URL", f"http://127.0.0.1:{port}")
+            monkeypatch.setattr(ext_router, "DREAM_AGENT_KEY", "wire-test-secret")
+
+            assert ext_router._call_agent_compose_rename("activate", "fakesvc") is True
+            assert (ext_dir / "compose.yaml").exists()
+            assert not (ext_dir / "compose.yaml.disabled").exists()
+
+            assert ext_router._call_agent_compose_rename("deactivate", "fakesvc") is True
+            assert (ext_dir / "compose.yaml.disabled").exists()
+            assert not (ext_dir / "compose.yaml").exists()
+
+            monkeypatch.setattr(ext_router, "DREAM_AGENT_KEY", "wrong-secret")
+            assert ext_router._call_agent_compose_rename("activate", "fakesvc") is False
+            assert (ext_dir / "compose.yaml.disabled").exists()
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+
 class TestInvalidateComposeCache:
 
     def test_unlinks_existing_cache_file(self, tmp_path, monkeypatch):

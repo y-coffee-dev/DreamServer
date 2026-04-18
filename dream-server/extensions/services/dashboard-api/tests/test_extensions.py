@@ -635,6 +635,40 @@ class TestDisableExtension:
         assert (user_dir / "my-ext" / "compose.yaml.disabled").exists()
         assert not (user_dir / "my-ext" / "compose.yaml").exists()
 
+    def test_disable_builtin_delegates_to_host_agent(
+        self, test_client, monkeypatch, tmp_path,
+    ):
+        builtin_root = tmp_path / "builtin"
+        ext_dir = builtin_root / "my-ext"
+        ext_dir.mkdir(parents=True)
+        (ext_dir / "compose.yaml").write_text(_SAFE_COMPOSE)
+        _patch_mutation_config(monkeypatch, tmp_path)
+        monkeypatch.setattr("routers.extensions.EXTENSIONS_DIR", builtin_root)
+        monkeypatch.setattr("routers.extensions._call_agent", lambda action, sid: True)
+
+        calls = []
+
+        def _mock_compose_rename(action, service_id):
+            calls.append((action, service_id))
+            (ext_dir / "compose.yaml").rename(ext_dir / "compose.yaml.disabled")
+            return True
+
+        monkeypatch.setattr(
+            "routers.extensions._call_agent_compose_rename",
+            _mock_compose_rename,
+        )
+
+        resp = test_client.post(
+            "/api/extensions/my-ext/disable",
+            headers=test_client.auth_headers,
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["action"] == "disabled"
+        assert calls == [("deactivate", "my-ext")]
+        assert (ext_dir / "compose.yaml.disabled").exists()
+        assert not (ext_dir / "compose.yaml").exists()
+
     def test_disable_unlinks_progress_file(self, test_client, monkeypatch, tmp_path):
         """Disable removes the stale progress file so status reflects reality."""
         user_dir = _setup_user_ext(tmp_path, "my-ext", enabled=True)
@@ -2122,10 +2156,22 @@ class TestActivateServiceBuiltinBranch:
 
         monkeypatch.setattr("routers.extensions.EXTENSIONS_DIR", builtin_root)
         monkeypatch.setattr("routers.extensions.USER_EXTENSIONS_DIR", user_root)
+        calls = []
+
+        def _mock_compose_rename(action, service_id):
+            calls.append((action, service_id))
+            (ext_dir / "compose.yaml.disabled").rename(ext_dir / "compose.yaml")
+            return True
+
+        monkeypatch.setattr(
+            "routers.extensions._call_agent_compose_rename",
+            _mock_compose_rename,
+        )
 
         result = _activate_service("fakesvc")
 
         assert result == {"id": "fakesvc", "action": "enabled"}
+        assert calls == [("activate", "fakesvc")]
         assert (ext_dir / "compose.yaml").exists()
         assert not (ext_dir / "compose.yaml.disabled").exists()
 
