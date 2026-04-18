@@ -16,6 +16,8 @@ _spec.loader.exec_module(_mod)
 _check_lemonade_health = _mod._check_lemonade_health
 _send_lemonade_warmup = _mod._send_lemonade_warmup
 _write_lemonade_config = _mod._write_lemonade_config
+_compose_restart_llama_server = _mod._compose_restart_llama_server
+_launch_native_llama_server = _mod._launch_native_llama_server
 
 
 # --- _check_lemonade_health ---
@@ -134,6 +136,78 @@ class TestWriteLemonadeConfig:
         litellm_dir.mkdir(parents=True)
         _write_lemonade_config(tmp_path, "model.gguf")
         assert (litellm_dir / "lemonade.yaml").exists()
+
+
+class TestComposeRestartLlamaServer:
+
+    def test_amd_uses_stop_then_up(self, monkeypatch, tmp_path):
+        calls = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        monkeypatch.setattr(_mod, "INSTALL_DIR", tmp_path)
+        monkeypatch.setattr(
+            _mod,
+            "resolve_compose_flags",
+            lambda: ["--env-file", ".env", "-f", "docker-compose.base.yml"],
+        )
+        monkeypatch.setattr(subprocess, "run", fake_run)
+
+        _compose_restart_llama_server({"GPU_BACKEND": "amd"})
+
+        assert calls == [
+            [
+                "docker", "compose", "--env-file", ".env", "-f",
+                "docker-compose.base.yml", "stop", "llama-server",
+            ],
+            [
+                "docker", "compose", "--env-file", ".env", "-f",
+                "docker-compose.base.yml", "up", "-d", "llama-server",
+            ],
+        ]
+
+
+class TestLaunchNativeLlamaServer:
+
+    def test_reads_env_and_writes_pid(self, monkeypatch, tmp_path):
+        env_path = tmp_path / ".env"
+        env_path.write_text(
+            "GGUF_FILE=test-model.gguf\nCTX_SIZE=8192\nLLAMA_REASONING=on\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "data" / "models").mkdir(parents=True)
+        (tmp_path / "data").mkdir(exist_ok=True)
+        llama_bin = tmp_path / "bin" / "llama-server"
+        llama_bin.parent.mkdir(parents=True)
+        llama_bin.write_text("", encoding="utf-8")
+        llama_log = tmp_path / "data" / "llama-server.log"
+        pid_file = tmp_path / "data" / ".llama-server.pid"
+
+        calls = []
+
+        class _FakeProc:
+            pid = 4321
+
+        def fake_popen(cmd, **kwargs):
+            calls.append((cmd, kwargs))
+            return _FakeProc()
+
+        monkeypatch.setattr(_mod, "INSTALL_DIR", tmp_path)
+        monkeypatch.setattr(subprocess, "Popen", fake_popen)
+
+        _launch_native_llama_server(env_path, llama_bin, llama_log, pid_file)
+
+        assert pid_file.read_text(encoding="utf-8") == "4321"
+        cmd, _kwargs = calls[0]
+        assert cmd[0] == str(llama_bin)
+        assert "--model" in cmd
+        assert str(tmp_path / "data" / "models" / "test-model.gguf") in cmd
+        assert "--ctx-size" in cmd
+        assert "8192" in cmd
+        assert "--reasoning-format" in cmd
+        assert "deepseek" in cmd
 
 
 # --- Rollback integration ---

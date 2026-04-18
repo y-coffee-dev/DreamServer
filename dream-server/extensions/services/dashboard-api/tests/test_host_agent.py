@@ -449,3 +449,44 @@ class TestHandleEnvUpdate:
 
         assert handler.response_code == 500
         assert ".env.schema.json not found" in handler.parse_response()["error"]
+
+
+class TestHandleModelDownloadCancel:
+
+    def test_returns_no_download_when_idle(self, monkeypatch):
+        handler = _FakeHandler(b"")
+        monkeypatch.setattr(_mod, "AGENT_API_KEY", "test-key")
+        monkeypatch.setattr(_mod, "_model_download_thread", None)
+        _mod._model_download_cancel.clear()
+
+        _mod.AgentHandler._handle_model_download_cancel(handler)
+
+        assert handler.response_code == 200
+        assert handler.parse_response()["status"] == "no_download"
+        assert _mod._model_download_cancel.is_set() is False
+
+    def test_sets_cancel_flag_and_kills_active_proc(self, monkeypatch):
+        class _AliveThread:
+            def is_alive(self):
+                return True
+
+        class _FakeProc:
+            def __init__(self):
+                self.killed = False
+
+            def kill(self):
+                self.killed = True
+
+        handler = _FakeHandler(b"")
+        proc = _FakeProc()
+        monkeypatch.setattr(_mod, "AGENT_API_KEY", "test-key")
+        monkeypatch.setattr(_mod, "_model_download_thread", _AliveThread())
+        monkeypatch.setattr(_mod, "_model_download_proc", proc)
+        _mod._model_download_cancel.clear()
+
+        _mod.AgentHandler._handle_model_download_cancel(handler)
+
+        assert handler.response_code == 200
+        assert handler.parse_response()["status"] == "cancelling"
+        assert _mod._model_download_cancel.is_set() is True
+        assert proc.killed is True
