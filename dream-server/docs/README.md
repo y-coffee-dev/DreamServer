@@ -70,6 +70,7 @@ Links from this directory use `../` for the repo root (e.g. `../README.md`, `../
 | [POST-INSTALL-CHECKLIST.md](POST-INSTALL-CHECKLIST.md) | Operators | Post-install verification |
 | [KNOWN-GOOD-VERSIONS.md](KNOWN-GOOD-VERSIONS.md) | Operators | Tested image/version combos |
 | [PLATFORM-TRUTH-TABLE.md](PLATFORM-TRUTH-TABLE.md) | Developers | Platform feature matrix |
+| [LAN-CLUSTER-GUIDE.md](LAN-CLUSTER-GUIDE.md) | Operators | Pool GPUs across LAN machines with llama.cpp RPC (controller + workers) |
 
 ## Project
 
