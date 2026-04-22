@@ -97,7 +97,7 @@ teardown() {
         }
         _docker_cmd_arr
     '
-    assert_output $'sudo\ndocker'
+    assert_output "sudo docker"
 }
 
 @test "_docker_cmd_arr: returns docker when DOCKER_CMD is empty" {
