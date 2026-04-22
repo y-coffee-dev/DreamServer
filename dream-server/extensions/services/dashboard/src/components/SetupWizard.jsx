@@ -47,17 +47,49 @@ export default function SetupWizard({ onComplete }) {
       const res = await fetch('/api/setup/test', { method: 'POST' })
       const reader = res.body.getReader()
       const decoder = new TextDecoder()
+      // The backend streams plain text. We split on newlines so each script
+      // line becomes its own <div>, and scan for a machine-readable sentinel
+      // (`__DREAM_RESULT__:PASS|FAIL:<returncode>`) to determine success.
+      let buffer = ''
+      let resultStatus = null // 'PASS' | 'FAIL' | null
+      const collected = [] // local mirror of displayed lines for fallback scan
+
+      const pushLine = (line) => {
+        const match = line.match(/^__DREAM_RESULT__:(PASS|FAIL):(-?\d+)$/)
+        if (match) {
+          resultStatus = match[1]
+          return // don't display the sentinel to the user
+        }
+        collected.push(line)
+        setTestStatus(prev => ({ ...prev, output: [...prev.output, line] }))
+      }
 
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
 
-        const text = decoder.decode(value)
-        setTestStatus(prev => ({ ...prev, output: [...prev.output, text] }))
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() // keep the trailing partial line for the next chunk
+        for (const line of lines) pushLine(line)
       }
 
-      setTestStatus(prev => ({ ...prev, running: false, done: true, success: true }))
-      setConfig(c => ({ ...c, tested: true }))
+      // Flush any decoder tail plus any remaining unterminated line.
+      buffer += decoder.decode()
+      if (buffer) pushLine(buffer)
+
+      // Prefer the structured sentinel. Fall back to scanning accumulated
+      // output for the human-readable trailer if the sentinel is absent
+      // (older backends, truncated stream). Absence defaults to failure —
+      // we refuse to greenlight a user through a stream of unknown outcome.
+      const success = resultStatus !== null
+        ? resultStatus === 'PASS'
+        : collected.some(l => l.includes('All tests passed!'))
+
+      setTestStatus(prev => ({ ...prev, running: false, done: true, success }))
+      if (success) {
+        setConfig(c => ({ ...c, tested: true }))
+      }
     } catch (err) {
       setTestStatus(prev => ({ ...prev, running: false, done: true, success: false, output: [...prev.output, `Error: ${err.message}`] }))
     }
