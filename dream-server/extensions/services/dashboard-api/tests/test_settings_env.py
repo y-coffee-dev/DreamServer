@@ -309,3 +309,32 @@ def test_render_env_preserves_extras_with_empty_values():
     rendered = _render_env_from_values(values)
     assert "TENSOR_SPLIT=" in rendered
     assert "GPU_UUID=GPU-abc123" in rendered
+
+
+# --- Production schema secret-flag coverage ---
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "TARGET_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "OPENAI_API_KEY",
+        "TOGETHER_API_KEY",
+        "LIVEKIT_API_KEY",
+    ],
+)
+def test_production_schema_marks_provider_api_keys_secret(key):
+    """Credential API keys in the production schema must carry ``secret: true``.
+
+    Regression guard: without the explicit flag, masking in both
+    ``dream config show`` and ``GET /api/settings/env`` falls back to a
+    name-pattern match. The schema should be the authoritative source.
+    """
+    import pathlib
+
+    schema_path = pathlib.Path(__file__).resolve().parents[4] / ".env.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    entry = schema["properties"].get(key)
+    assert entry is not None, f"schema missing entry for {key}"
+    assert entry.get("secret") is True, f"{key} must have 'secret': true in .env.schema.json"
