@@ -766,7 +766,8 @@ def _check_host_agent_available() -> bool:
     try:
         with urllib.request.urlopen(f"{AGENT_URL}/health", timeout=3) as response:
             return response.status == 200
-    except Exception:
+    except (urllib.error.URLError, socket.timeout, ConnectionError, OSError) as exc:
+        logger.debug("Host agent health probe failed: %s", exc)
         return False
 
 
@@ -1081,13 +1082,17 @@ async def status(api_key: str = Depends(verify_api_key)):
 async def api_status(api_key: str = Depends(verify_api_key)):
     """Dashboard-compatible status endpoint.
 
-    Wrapped in a top-level try/except so that a transient failure in any
-    sub-call (GPU, health checks, llama metrics …) never returns a raw 500
-    to the dashboard — the frontend would flash "0/17" otherwise.
+    The fallback response covers transient runtime failures in sub-calls
+    (GPU probe, service health checks, llama metrics) so the dashboard
+    doesn't flash "0/17" on a brief driver stall. The catch is narrowed
+    to the I/O / parse / value families those sub-calls are expected to
+    raise — programming errors (TypeError, AttributeError, KeyError on
+    internal dicts, …) intentionally propagate so CLAUDE.md's Let-It-Crash
+    rule still catches real bugs.
     """
     try:
         return await _build_api_status()
-    except Exception:
+    except (OSError, ValueError, asyncio.TimeoutError):
         logger.exception("/api/status handler failed — returning safe fallback")
         return {
             "gpu": None, "services": [], "model": None,
