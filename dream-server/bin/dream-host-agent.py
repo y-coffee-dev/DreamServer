@@ -15,6 +15,7 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 from datetime import datetime, timezone
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
@@ -226,7 +227,9 @@ def _fs_type(path: Path) -> str | None:
 
 def _precreate_data_dirs(service_id: str):
     """Pre-create data directories for an extension with correct ownership."""
-    ext_dir = USER_EXTENSIONS_DIR / service_id
+    ext_dir = _find_ext_dir(service_id)
+    if ext_dir is None:
+        return
     compose_path = ext_dir / "compose.yaml"
     if not compose_path.exists():
         return
@@ -259,10 +262,14 @@ def _precreate_data_dirs(service_id: str):
             continue
         for vol in volumes:
             vol_str = str(vol).split(":")[0]
-            if vol_str.startswith("./data/") or vol_str.startswith("data/"):
-                dir_path = (INSTALL_DIR / vol_str.lstrip("./")).resolve()
+            # Accept any relative bind-mount source (e.g. "./data/state",
+            # "./upload", "config/stuff"). Skip named volumes (no "/") and
+            # absolute paths ("/etc/..."). Compose resolves relative paths
+            # against the compose file's directory, so anchor on ext_dir.
+            if vol_str and not vol_str.startswith("/") and "/" in vol_str:
+                dir_path = (ext_dir / vol_str.lstrip("./")).resolve()
                 try:
-                    dir_path.relative_to(INSTALL_DIR.resolve())
+                    dir_path.relative_to(ext_dir.resolve())
                 except ValueError:
                     logger.warning("Skipping out-of-tree volume path in %s: %s", service_id, vol_str)
                     continue
@@ -1172,10 +1179,15 @@ class AgentHandler(BaseHTTPRequestHandler):
             try:
                 flags = resolve_compose_flags()
 
+                ext_dir = _find_ext_dir(service_id)
+                if ext_dir is None:
+                    _write_progress(service_id, "error", "Installation failed",
+                                    error=f"Extension directory not found for {service_id}")
+                    return
+
                 # Step 1: Setup hook (if requested)
                 if run_setup_hook:
                     _write_progress(service_id, "setup_hook", "Running setup...")
-                    ext_dir = USER_EXTENSIONS_DIR / service_id
                     hook_path = _resolve_hook(ext_dir, "post_install")
                     if hook_path:
                         # Minimal allowlist env — mirror _execute_hook (L856-866)
@@ -1227,6 +1239,43 @@ class AgentHandler(BaseHTTPRequestHandler):
                 if start_result.returncode != 0:
                     _write_progress(service_id, "error", "Installation failed",
                                     error=start_result.stderr[:500])
+                    return
+
+                # Poll for running state; compose `up -d` returns 0 even for
+                # Created/Exited/Restarting containers, so a 0 exit is not
+                # conclusive proof the service actually started.
+                install_manifest = _read_manifest(ext_dir)
+                install_service_def = install_manifest.get("service", {}) if install_manifest else {}
+                if not isinstance(install_service_def, dict):
+                    install_service_def = {}
+                container_name = install_service_def.get("container_name") or f"dream-{service_id}"
+
+                deadline = time.monotonic() + 15
+                state: str | None = None
+                state_error = ""
+                while time.monotonic() < deadline:
+                    try:
+                        inspect_result = subprocess.run(
+                            ["docker", "inspect", "--format",
+                             "{{.State.Status}}|{{.State.Error}}", container_name],
+                            capture_output=True, text=True, timeout=5,
+                        )
+                    except subprocess.TimeoutExpired:
+                        inspect_result = None
+                    if inspect_result is not None and inspect_result.returncode == 0:
+                        parts = inspect_result.stdout.strip().split("|", 1)
+                        state = parts[0] if parts else ""
+                        state_error = parts[1] if len(parts) > 1 else ""
+                        if state == "running":
+                            break
+                    time.sleep(1)
+
+                if state != "running":
+                    msg = f"Container did not reach running state within 15s (state={state or 'unknown'})"
+                    if state_error:
+                        msg += f": {state_error}"
+                    _write_progress(service_id, "error", "Installation failed",
+                                    error=msg)
                     return
 
                 # Step 4: Success
