@@ -2,6 +2,9 @@ services:
   localai:
     image: localai/localai:v3.12.1-aio-cpu@sha256:4cbc20c59558ed6c1cae9bc3f6ae34d75d390b370aa8ac62a59327089fa56cec
     container_name: dream-localai
+    depends_on:
+      llama-server:
+        condition: service_healthy
     networks:
       - dream-network
     ports:

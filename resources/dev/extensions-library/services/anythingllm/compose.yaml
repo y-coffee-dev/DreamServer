@@ -3,6 +3,9 @@ services:
     image: mintplexlabs/anythingllm:1.11.1
     container_name: dream-anythingllm
     restart: unless-stopped
+    depends_on:
+      ollama:
+        condition: service_healthy
     security_opt:
       - no-new-privileges:true
     environment:
