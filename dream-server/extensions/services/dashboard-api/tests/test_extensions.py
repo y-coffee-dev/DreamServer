@@ -613,6 +613,111 @@ class TestEnableExtension:
         assert "local build" in resp.json()["detail"]
 
 
+class TestEnableExtensionHookReturnHandling:
+    """pre_start failures must block start; post_start failures surface as warnings."""
+
+    def test_enable_pre_start_failure_blocks_start(
+        self, test_client, monkeypatch, tmp_path,
+    ):
+        """pre_start False → start NOT called, error progress written, agent_ok=False."""
+        user_dir = _setup_user_ext(tmp_path, "my-ext", enabled=False)
+        _patch_mutation_config(monkeypatch, tmp_path, user_dir=user_dir)
+
+        start_calls = []
+
+        def fake_start(action, sid):
+            start_calls.append((action, sid))
+            return True
+
+        monkeypatch.setattr("routers.extensions._call_agent", fake_start)
+        # pre_start returns False, post_start would return True (but should not be reached)
+        monkeypatch.setattr(
+            "routers.extensions._call_agent_hook",
+            lambda sid, hook: hook != "pre_start",
+        )
+
+        resp = test_client.post(
+            "/api/extensions/my-ext/enable",
+            headers=test_client.auth_headers,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["action"] == "enabled"
+        assert data["restart_required"] is True
+        assert "Run 'dream restart'" in data["message"]
+        assert data["warnings"] == []
+        # start was never called for the service whose pre_start failed
+        assert ("start", "my-ext") not in start_calls
+
+        # Error progress file should record the pre_start failure
+        progress_file = tmp_path / "extension-progress" / "my-ext.json"
+        assert progress_file.exists()
+        progress = json.loads(progress_file.read_text())
+        assert progress["status"] == "error"
+        assert "pre_start hook failed" in progress["error"]
+
+    def test_enable_post_start_failure_returns_warning(
+        self, test_client, monkeypatch, tmp_path,
+    ):
+        """post_start False → start IS called, response carries a warning, success path."""
+        user_dir = _setup_user_ext(tmp_path, "my-ext", enabled=False)
+        _patch_mutation_config(monkeypatch, tmp_path, user_dir=user_dir)
+
+        start_calls = []
+
+        def fake_start(action, sid):
+            start_calls.append((action, sid))
+            return True
+
+        monkeypatch.setattr("routers.extensions._call_agent", fake_start)
+        # pre_start succeeds, post_start fails
+        monkeypatch.setattr(
+            "routers.extensions._call_agent_hook",
+            lambda sid, hook: hook != "post_start",
+        )
+
+        resp = test_client.post(
+            "/api/extensions/my-ext/enable",
+            headers=test_client.auth_headers,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["action"] == "enabled"
+        # post_start failure is non-fatal — service still reports success
+        assert data["restart_required"] is False
+        assert data["message"] == "Extension enabled and started."
+        assert ("start", "my-ext") in start_calls
+        assert isinstance(data["warnings"], list)
+        assert len(data["warnings"]) == 1
+        assert "my-ext" in data["warnings"][0]
+        assert "post_start hook failed" in data["warnings"][0]
+
+    def test_enable_both_hooks_succeed_no_warnings(
+        self, test_client, monkeypatch, tmp_path,
+    ):
+        """Baseline: pre_start + post_start True → no warnings, agent_ok True."""
+        user_dir = _setup_user_ext(tmp_path, "my-ext", enabled=False)
+        _patch_mutation_config(monkeypatch, tmp_path, user_dir=user_dir)
+
+        monkeypatch.setattr(
+            "routers.extensions._call_agent", lambda action, sid: True,
+        )
+        monkeypatch.setattr(
+            "routers.extensions._call_agent_hook", lambda sid, hook: True,
+        )
+
+        resp = test_client.post(
+            "/api/extensions/my-ext/enable",
+            headers=test_client.auth_headers,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["action"] == "enabled"
+        assert data["restart_required"] is False
+        assert data["warnings"] == []
+        assert data["message"] == "Extension enabled and started."
+
+
 # --- Disable endpoint ---
 
 

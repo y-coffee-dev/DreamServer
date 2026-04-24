@@ -1325,13 +1325,24 @@ def enable_extension(
 
     # Start all enabled services via agent (outside lock)
     agent_ok = True
+    warnings: list[str] = []
     for svc_id in enabled_services:
-        _call_agent_hook(svc_id, "pre_start")
+        # pre_start failure is terminal for this service — do not start it
+        if not _call_agent_hook(svc_id, "pre_start"):
+            agent_ok = False
+            _write_error_progress(
+                svc_id,
+                "pre_start hook failed — extension not started.",
+            )
+            continue
         if not _call_agent("start", svc_id):
             agent_ok = False
         # post_start is non-terminal — log failure but don't fail the enable
         if not _call_agent_hook(svc_id, "post_start"):
             logger.warning("post_start hook failed for %s (non-fatal)", svc_id)
+            warnings.append(
+                f"{svc_id}: post_start hook failed — manual configuration may be needed",
+            )
 
     logger.info("Enabled extension: %s (deps: %s)", service_id,
                 enabled_services[:-1] if len(enabled_services) > 1 else "none")
@@ -1340,6 +1351,7 @@ def enable_extension(
         "action": "enabled",
         "enabled_services": enabled_services,
         "restart_required": not agent_ok,
+        "warnings": warnings,
         "message": (
             "Extension enabled and started." if agent_ok
             else "Extension enabled. Run 'dream restart' to start."
