@@ -1148,7 +1148,7 @@ class AgentHandler(BaseHTTPRequestHandler):
                 _write_progress(service_id, "starting", "Starting container...")
                 _precreate_data_dirs(service_id)
                 start_result = subprocess.run(
-                    ["docker", "compose"] + flags + ["up", "-d", "--no-deps", service_id],
+                    ["docker", "compose"] + flags + ["up", "-d", service_id],
                     cwd=str(INSTALL_DIR), capture_output=True, text=True,
                     timeout=SUBPROCESS_TIMEOUT_START,
                 )

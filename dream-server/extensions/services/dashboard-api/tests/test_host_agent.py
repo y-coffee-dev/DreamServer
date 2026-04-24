@@ -284,6 +284,43 @@ class TestInstallHookEnvAllowlist:
         )
 
 
+# --- Install "up -d" must not use --no-deps (regression) ---
+#
+# _handle_install previously passed --no-deps to `docker compose up -d`, which
+# prevented an extension's private sidecar services (declared in its own
+# compose fragment) from starting — including cross-extension depends_on
+# relationships like perplexica -> searxng. The fix removes --no-deps from
+# the install path only; docker_compose_recreate (used for core-service
+# force-recreate after a model swap) intentionally keeps --no-deps.
+
+
+class TestInstallStartCommandNoDeps:
+
+    def _install_source(self):
+        import inspect
+        return inspect.getsource(_mod.AgentHandler._handle_install)
+
+    def _recreate_source(self):
+        import inspect
+        return inspect.getsource(_mod.docker_compose_recreate)
+
+    def test_install_up_command_does_not_pass_no_deps(self):
+        src = self._install_source()
+        assert '"--no-deps"' not in src and "'--no-deps'" not in src, (
+            "_handle_install must not pass --no-deps to `docker compose up -d`; "
+            "extensions with private sidecars or cross-extension depends_on "
+            "need compose to bring dependencies up."
+        )
+
+    def test_docker_compose_recreate_still_uses_no_deps(self):
+        src = self._recreate_source()
+        assert '"--no-deps"' in src or "'--no-deps'" in src, (
+            "docker_compose_recreate must keep --no-deps; "
+            "core-service recreation (e.g. after a model swap) is intentionally "
+            "scoped to the named services only."
+        )
+
+
 # --- _handle_env_update ---
 
 
