@@ -1252,7 +1252,11 @@ class AgentHandler(BaseHTTPRequestHandler):
                     install_service_def = {}
                 container_name = install_service_def.get("container_name") or f"dream-{service_id}"
 
-                deadline = time.monotonic() + 15
+                # Per-extension startup deadline; manifests with heavy init
+                # (postgres, clickhouse, JVM-based services) can override the
+                # 15s default via service.startup_timeout.
+                startup_timeout = install_service_def.get("startup_timeout", 15)
+                deadline = time.monotonic() + startup_timeout
                 state: str | None = None
                 state_error = ""
                 while time.monotonic() < deadline:
@@ -1273,7 +1277,7 @@ class AgentHandler(BaseHTTPRequestHandler):
                     time.sleep(1)
 
                 if state != "running":
-                    msg = f"Container did not reach running state within 15s (state={state or 'unknown'})"
+                    msg = f"Container did not reach running state within {startup_timeout}s (state={state or 'unknown'})"
                     if state_error:
                         msg += f": {state_error}"
                     _write_progress(service_id, "error", "Installation failed",
