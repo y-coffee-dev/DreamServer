@@ -447,6 +447,44 @@ class TestSyncExtensionConfigWire:
             server.server_close()
             thread.join(timeout=2)
 
+    def test_rejects_when_config_dir_itself_is_symlink(self, tmp_path, monkeypatch):
+        """Top-level `config/` itself a symlink — covers the upfront
+        ext_config.is_symlink() guard, separate from the dirs+files walk."""
+        import threading
+        from http.server import HTTPServer
+
+        install_dir = tmp_path / "install"
+        user_root = install_dir / "data" / "user-extensions"
+        install_dir.mkdir()
+        user_root.mkdir(parents=True)
+        secret_dir = tmp_path / "secret"
+        secret_dir.mkdir()
+        (secret_dir / "private.key").write_text("EXFIL ME", encoding="utf-8")
+
+        # Build an extension whose `config` IS the symlink (not a child of it).
+        ext = user_root / "fakesvc"
+        ext.mkdir()
+        (ext / "config").symlink_to(secret_dir)
+
+        monkeypatch.setattr(_mod, "INSTALL_DIR", install_dir)
+        monkeypatch.setattr(_mod, "USER_EXTENSIONS_DIR", user_root)
+        monkeypatch.setattr(_mod, "EXTENSIONS_DIR", tmp_path / "builtin-empty")
+        monkeypatch.setattr(_mod, "AGENT_API_KEY", "wire-test-secret")
+
+        server = HTTPServer(("127.0.0.1", 0), _mod.AgentHandler)
+        port = server.server_address[1]
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            status, body = self._post(port, "fakesvc")
+            assert status == 400, f"expected 400, got {status}: {body}"
+            assert "symlink" in body.get("error", "").lower()
+            assert not (install_dir / "config" / "fakesvc").exists()
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
     def test_rejects_invalid_service_id(self, tmp_path, monkeypatch):
         """SERVICE_ID_RE rejection — match the auth/symlink reject style."""
         import threading
