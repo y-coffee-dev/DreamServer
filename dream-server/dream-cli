@@ -447,8 +447,12 @@ resolve_service() {
 # Regenerate .compose-flags after enable/disable
 _regenerate_compose_flags() {
     if [[ -x "$INSTALL_DIR/scripts/resolve-compose-stack.sh" ]]; then
+        # --gpu-count gates the multigpu-{backend}.yml overlay; without it,
+        # toggling any extension would silently strip multi-GPU plumbing
+        # from the persisted cache.
         "$INSTALL_DIR/scripts/resolve-compose-stack.sh" \
             --script-dir "$INSTALL_DIR" --tier "${TIER:-1}" --gpu-backend "${GPU_BACKEND:-nvidia}" \
+            --gpu-count "${GPU_COUNT:-1}" \
             > "$INSTALL_DIR/.compose-flags" 2>/dev/null || rm -f "$INSTALL_DIR/.compose-flags"
     else
         rm -f "$INSTALL_DIR/.compose-flags"
@@ -562,9 +566,12 @@ get_compose_flags() {
     # Fallback: resolve dynamically
     local base_flags
     if [[ -x "$INSTALL_DIR/scripts/resolve-compose-stack.sh" ]]; then
-        # Resolver handles base + GPU overlay + extension compose files
+        # Resolver handles base + GPU overlay + extension compose files.
+        # --gpu-count gates the multigpu-{backend}.yml overlay — without it,
+        # this fallback path resolves to a single-GPU stack on multi-GPU hosts.
         base_flags=$("$INSTALL_DIR/scripts/resolve-compose-stack.sh" \
-            --script-dir "$INSTALL_DIR" --tier "${TIER:-1}" --gpu-backend "${GPU_BACKEND:-nvidia}")
+            --script-dir "$INSTALL_DIR" --tier "${TIER:-1}" --gpu-backend "${GPU_BACKEND:-nvidia}" \
+            --gpu-count "${GPU_COUNT:-1}")
         echo "$base_flags"
     elif [[ -f "$INSTALL_DIR/docker-compose.base.yml" ]]; then
         base_flags="-f docker-compose.base.yml"

@@ -152,8 +152,12 @@ fi
 # Without this, Phases 4-11 use stale flags from Phase 2 that reference files
 # which were just renamed to .disabled.
 if [[ -x "$SCRIPT_DIR/scripts/resolve-compose-stack.sh" ]]; then
+    # --gpu-count is load-bearing: the resolver only adds the multigpu-{backend}.yml
+    # overlay when count > 1. Omitting it here would silently drop multi-GPU
+    # plumbing on installs that already detected GPU_COUNT >= 2 in Phase 02.
     _refreshed_flags=$("$SCRIPT_DIR/scripts/resolve-compose-stack.sh" \
-        --script-dir "$SCRIPT_DIR" --tier "${TIER:-1}" --gpu-backend "${GPU_BACKEND:-nvidia}") || true
+        --script-dir "$SCRIPT_DIR" --tier "${TIER:-1}" --gpu-backend "${GPU_BACKEND:-nvidia}" \
+        --gpu-count "${GPU_COUNT:-1}" 2>/dev/null) || true
     if [[ -n "$_refreshed_flags" ]]; then
         COMPOSE_FLAGS="$_refreshed_flags"
         log "Compose flags refreshed after feature selection"

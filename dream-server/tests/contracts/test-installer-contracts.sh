@@ -97,6 +97,47 @@ for svc in qdrant embeddings; do
     || { echo "[FAIL] ENABLE_RAG opt-out missing sync for '$svc' in $features_phase"; exit 1; }
 done
 
+echo "[contract] every resolve-compose-stack.sh invocation passes --gpu-count"
+# The resolver's --gpu-count flag gates the multigpu-{backend}.yml overlay.
+# A caller that omits it silently resolves to a single-GPU stack on multi-GPU
+# hardware. 11-services.sh persists its result into .compose-flags, so the
+# bug propagates to every subsequent dream-cli invocation.
+#
+# Strategy: pair each line invoking the resolver with the next 3 lines (to
+# catch backslash-continued invocations) and assert that segment contains
+# --gpu-count. Existence guards like [[ -x ... ]] are excluded — they don't
+# launch the script.
+_resolver_callers=(
+  "dream-cli"
+  "dream-update.sh"
+  "bin/dream-host-agent.py"
+  "scripts/dream-preflight.sh"
+  "scripts/validate.sh"
+  "installers/lib/compose-select.sh"
+  "installers/macos/dream-macos.sh"
+  "installers/phases/03-features.sh"
+  "installers/phases/11-services.sh"
+)
+for f in "${_resolver_callers[@]}"; do
+  test -f "$f" || { echo "[FAIL] missing resolver caller: $f"; exit 1; }
+  # Match lines that actually launch the script: $(...resolve-compose-stack.sh...
+  # or "...resolve-compose-stack.sh" \  or bash ...resolve-compose-stack.sh...
+  # Skip lines whose 'resolve-compose-stack.sh' is a [[ -x|-f ]] existence test.
+  while IFS=: read -r lineno line; do
+    # Skip existence guards ([[ -x ... ]], [[ -f ... ]]) and comments/docstrings.
+    [[ "$line" =~ \[\[[[:space:]]+-[xfre][[:space:]] ]] && continue
+    [[ "$line" =~ ^[[:space:]]*\# ]] && continue
+    [[ "$line" =~ ^[[:space:]]*(\"|\') ]] && continue
+    end=$((lineno + 8))
+    segment=$(sed -n "${lineno},${end}p" "$f")
+    if ! grep -q -- "--gpu-count" <<<"$segment"; then
+      echo "[FAIL] $f:$lineno invokes resolver without --gpu-count nearby"
+      exit 1
+    fi
+  done < <(grep -nE 'resolve-compose-stack\.sh' "$f" || true)
+done
+unset _resolver_callers
+
 echo "[contract] Token Spy dashboard ships offline chart assets"
 test -f extensions/services/token-spy/dashboard_charts.js || { echo "[FAIL] missing extensions/services/token-spy/dashboard_charts.js"; exit 1; }
 grep -q '/dashboard-assets/charts.js' extensions/services/token-spy/main.py || \
