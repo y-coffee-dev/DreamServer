@@ -674,6 +674,111 @@ class TestEnableExtension:
         assert "local build" in resp.json()["detail"]
 
 
+class TestEnableExtensionHookReturnHandling:
+    """pre_start failures must block start; post_start failures surface as warnings."""
+
+    def test_enable_pre_start_failure_blocks_start(
+        self, test_client, monkeypatch, tmp_path,
+    ):
+        """pre_start False → start NOT called, error progress written, agent_ok=False."""
+        user_dir = _setup_user_ext(tmp_path, "my-ext", enabled=False)
+        _patch_mutation_config(monkeypatch, tmp_path, user_dir=user_dir)
+
+        start_calls = []
+
+        def fake_start(action, sid):
+            start_calls.append((action, sid))
+            return True
+
+        monkeypatch.setattr("routers.extensions._call_agent", fake_start)
+        # pre_start returns False, post_start would return True (but should not be reached)
+        monkeypatch.setattr(
+            "routers.extensions._call_agent_hook",
+            lambda sid, hook: hook != "pre_start",
+        )
+
+        resp = test_client.post(
+            "/api/extensions/my-ext/enable",
+            headers=test_client.auth_headers,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["action"] == "enabled"
+        assert data["restart_required"] is True
+        assert "Run 'dream restart'" in data["message"]
+        assert data["warnings"] == []
+        # start was never called for the service whose pre_start failed
+        assert ("start", "my-ext") not in start_calls
+
+        # Error progress file should record the pre_start failure
+        progress_file = tmp_path / "extension-progress" / "my-ext.json"
+        assert progress_file.exists()
+        progress = json.loads(progress_file.read_text())
+        assert progress["status"] == "error"
+        assert "pre_start hook failed" in progress["error"]
+
+    def test_enable_post_start_failure_returns_warning(
+        self, test_client, monkeypatch, tmp_path,
+    ):
+        """post_start False → start IS called, response carries a warning, success path."""
+        user_dir = _setup_user_ext(tmp_path, "my-ext", enabled=False)
+        _patch_mutation_config(monkeypatch, tmp_path, user_dir=user_dir)
+
+        start_calls = []
+
+        def fake_start(action, sid):
+            start_calls.append((action, sid))
+            return True
+
+        monkeypatch.setattr("routers.extensions._call_agent", fake_start)
+        # pre_start succeeds, post_start fails
+        monkeypatch.setattr(
+            "routers.extensions._call_agent_hook",
+            lambda sid, hook: hook != "post_start",
+        )
+
+        resp = test_client.post(
+            "/api/extensions/my-ext/enable",
+            headers=test_client.auth_headers,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["action"] == "enabled"
+        # post_start failure is non-fatal — service still reports success
+        assert data["restart_required"] is False
+        assert data["message"] == "Extension enabled and started."
+        assert ("start", "my-ext") in start_calls
+        assert isinstance(data["warnings"], list)
+        assert len(data["warnings"]) == 1
+        assert "my-ext" in data["warnings"][0]
+        assert "post_start hook failed" in data["warnings"][0]
+
+    def test_enable_both_hooks_succeed_no_warnings(
+        self, test_client, monkeypatch, tmp_path,
+    ):
+        """Baseline: pre_start + post_start True → no warnings, agent_ok True."""
+        user_dir = _setup_user_ext(tmp_path, "my-ext", enabled=False)
+        _patch_mutation_config(monkeypatch, tmp_path, user_dir=user_dir)
+
+        monkeypatch.setattr(
+            "routers.extensions._call_agent", lambda action, sid: True,
+        )
+        monkeypatch.setattr(
+            "routers.extensions._call_agent_hook", lambda sid, hook: True,
+        )
+
+        resp = test_client.post(
+            "/api/extensions/my-ext/enable",
+            headers=test_client.auth_headers,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["action"] == "enabled"
+        assert data["restart_required"] is False
+        assert data["warnings"] == []
+        assert data["message"] == "Extension enabled and started."
+
+
 # --- Disable endpoint ---
 
 
@@ -1842,6 +1947,44 @@ class TestExtensionLifecycleStatus:
         ext = resp.json()["extensions"][0]
         assert ext["status"] == "stopped"
 
+    def test_user_extension_http_unhealthy_returns_unhealthy(self, test_client, monkeypatch, tmp_path):
+        """User extension with compose.yaml + HTTP 4xx/5xx health → unhealthy."""
+        user_dir = tmp_path / "user"
+        ext_dir = user_dir / "my-ext"
+        ext_dir.mkdir(parents=True)
+        (ext_dir / "compose.yaml").write_text(_SAFE_COMPOSE)
+        (ext_dir / "manifest.yaml").write_text(yaml.dump({
+            "schema_version": "dream.services.v1",
+            "service": {"id": "my-ext", "name": "My Ext", "port": 8080,
+                         "health": "/health"},
+        }))
+
+        catalog = [_make_catalog_ext("my-ext", "My Extension")]
+        _patch_extensions_config(monkeypatch, catalog, tmp_path=tmp_path)
+        monkeypatch.setattr("routers.extensions.USER_EXTENSIONS_DIR", user_dir)
+
+        mock_svc = _make_service_status("my-ext", "unhealthy")
+        with patch("user_extensions.get_user_services_cached",
+                   return_value={"my-ext": {"host": "my-ext", "port": 8080,
+                                             "health": "/health", "name": "My Ext"}}):
+            with patch("helpers.get_all_services", new_callable=AsyncMock,
+                       return_value=[]):
+                with patch("helpers.check_service_health", new_callable=AsyncMock,
+                           return_value=mock_svc):
+                    resp = test_client.get(
+                        "/api/extensions/catalog",
+                        headers=test_client.auth_headers,
+                    )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        ext = data["extensions"][0]
+        assert ext["status"] == "unhealthy"
+        # Unhealthy counts toward "installed" and has its own summary bucket
+        assert data["summary"]["unhealthy"] == 1
+        assert data["summary"]["installed"] == 1
+        assert data["summary"]["stopped"] == 0
+
     def test_user_extension_disabled_unchanged(self, test_client, monkeypatch, tmp_path):
         """User extension with compose.yaml.disabled → disabled (unchanged)."""
         user_dir = tmp_path / "user"
@@ -1927,6 +2070,50 @@ class TestExtensionLifecycleStatus:
         assert data["action"] == "enabled"
         # compose.yaml should still exist (not renamed)
         assert (user_dir / "my-ext" / "compose.yaml").exists()
+
+    def test_enable_stopped_writes_error_progress_on_agent_failure(
+        self, test_client, monkeypatch, tmp_path,
+    ):
+        """Enable-stopped path writes error progress with restart guidance on agent failure."""
+        user_dir = _setup_user_ext(tmp_path, "my-ext", enabled=True)
+        _patch_mutation_config(monkeypatch, tmp_path, user_dir=user_dir)
+        monkeypatch.setattr("routers.extensions._call_agent",
+                            lambda action, sid: False)
+
+        resp = test_client.post(
+            "/api/extensions/my-ext/enable",
+            headers=test_client.auth_headers,
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["restart_required"] is True
+
+        progress_file = Path(tmp_path) / "extension-progress" / "my-ext.json"
+        assert progress_file.exists(), "enable-stopped path must write progress on agent failure"
+        data = json.loads(progress_file.read_text())
+        assert data["status"] == "error"
+        assert "dream restart" in data["error"]
+
+    def test_install_error_progress_includes_restart_guidance(
+        self, test_client, monkeypatch, tmp_path,
+    ):
+        """Install failure-path error message contains 'dream restart' actionable guidance."""
+        lib_dir = _setup_library_ext(tmp_path, "my-ext")
+        _patch_mutation_config(monkeypatch, tmp_path, lib_dir=lib_dir)
+        monkeypatch.setattr("routers.extensions._call_agent_install",
+                            lambda sid: False)
+
+        resp = test_client.post(
+            "/api/extensions/my-ext/install",
+            headers=test_client.auth_headers,
+        )
+
+        assert resp.status_code == 200
+        progress_file = Path(tmp_path) / "extension-progress" / "my-ext.json"
+        assert progress_file.exists()
+        data = json.loads(progress_file.read_text())
+        assert data["status"] == "error"
+        assert "dream restart" in data["error"]
 
     def test_enable_stopped_rejects_malicious_compose(self, test_client, monkeypatch, tmp_path):
         """Enable stopped ext with malicious compose.yaml → 400."""
