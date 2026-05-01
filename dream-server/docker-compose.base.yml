@@ -82,7 +82,11 @@ services:
       ENABLE_SEARCH_QUERY_GENERATION: "true"
       WEB_SEARCH_RESULT_COUNT: "5"
       # ── ComfyUI Image Generation (SDXL Lightning 4-step) ──
-      ENABLE_IMAGE_GENERATION: "${ENABLE_IMAGE_GENERATION:-true}"
+      # Default OFF in base: ComfyUI ships only on GPU backends (amd/nvidia per
+      # comfyui/manifest.yaml). The amd and nvidia overlays re-assert this as
+      # ${...:-true} so image-gen is on for GPU users by default. CPU/Apple
+      # users would otherwise hit a missing-engine error from Open WebUI.
+      ENABLE_IMAGE_GENERATION: "${ENABLE_IMAGE_GENERATION:-false}"
       IMAGE_GENERATION_ENGINE: "comfyui"
       COMFYUI_BASE_URL: "http://comfyui:8188"
       IMAGE_SIZE: "1024x1024"

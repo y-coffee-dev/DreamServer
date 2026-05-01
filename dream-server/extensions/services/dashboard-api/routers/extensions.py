@@ -212,7 +212,10 @@ def _compute_extension_status(ext: dict, services_by_id: dict) -> str:
 
 def _is_installable(ext_id: str) -> bool:
     """Check if an extension is available in the extensions library."""
-    return (EXTENSIONS_LIBRARY_DIR / ext_id).is_dir()
+    # Require a deployable compose.yaml — a directory with only compose.yaml.disabled
+    # or compose.yaml.reference cannot actually deploy and must not be advertised.
+    ext_dir = EXTENSIONS_LIBRARY_DIR / ext_id
+    return ext_dir.is_dir() and (ext_dir / "compose.yaml").exists()
 
 
 def _validate_service_id(service_id: str) -> None:
@@ -249,6 +252,56 @@ def _resolve_extension_dir(service_id: str) -> Path:
     raise HTTPException(
         status_code=404, detail=f"Extension not found: {service_id}",
     )
+
+
+# Compose port-binding host part may be a literal IP or a Compose variable
+# expansion. To stay default-secure while supporting the LAN toggle (PR #964),
+# we accept exactly two forms:
+#   1. literal "127.0.0.1"
+#   2. "${VAR:-127.0.0.1}" — variable with a literal-127.0.0.1 default
+# Everything else (bare "${VAR}" with no default, "${VAR:-0.0.0.0}", literal
+# "0.0.0.0", hostnames, etc.) is rejected.
+_LOOPBACK_VAR_DEFAULT_RE = re.compile(
+    r"^\$\{[A-Za-z_][A-Za-z0-9_]*:-127\.0\.0\.1\}$",
+)
+
+
+def _host_part_is_loopback(host: str) -> bool:
+    if host == "127.0.0.1":
+        return True
+    # fullmatch (not match) so trailing characters never sneak past the
+    # `$`-anchor — Python's `$` matches before a single trailing newline by
+    # default, which YAML won't normally produce but is worth defending.
+    return bool(_LOOPBACK_VAR_DEFAULT_RE.fullmatch(host))
+
+
+def _split_port_host(port_str: str) -> tuple[Optional[str], str]:
+    """Split a list-form port string into (host_part, rest).
+
+    Naive ``str.split(":")`` is wrong for the sanctioned ``${VAR:-127.0.0.1}``
+    pattern because the ``:-`` default operator contains a colon. We detect
+    the variable-expansion prefix and consume up to its closing brace before
+    splitting the remainder on the next colon.
+
+    Returns ``(None, port_str)`` when there is no explicit host part
+    (e.g. ``"8080:80"`` or bare ``"8080"`` — both bind 0.0.0.0 and are
+    rejected by the caller).
+    """
+    if port_str.startswith("${"):
+        end = port_str.find("}")
+        if end == -1 or end + 1 >= len(port_str) or port_str[end + 1] != ":":
+            # Malformed expansion or no host:port separator after it.
+            return port_str, ""
+        return port_str[: end + 1], port_str[end + 2:]
+    if ":" not in port_str:
+        return None, port_str
+    host, _, rest = port_str.partition(":")
+    if host.isdigit():
+        # 2-part "host_port:container_port" — implicit 0.0.0.0, no host_ip.
+        return None, port_str
+    return host, rest
+
+
 def _scan_compose_content(
     compose_path: Path,
     *,
@@ -411,31 +464,45 @@ def _scan_compose_content(
             if isinstance(port, dict):
                 # Dict-form: {target: 80, published: 8080, host_ip: ...}
                 host_ip = port.get("host_ip", "")
-                if port.get("published") and host_ip != "127.0.0.1":
+                if port.get("published") and not _host_part_is_loopback(host_ip):
                     raise HTTPException(
                         status_code=400,
-                        detail=f"Extension rejected: dict port binding in {svc_name} must use host_ip: 127.0.0.1",
+                        detail=(
+                            f"Extension rejected: dict port binding in {svc_name} "
+                            f"must use host_ip: 127.0.0.1 (or '${{VAR:-127.0.0.1}}')"
+                        ),
                     )
             else:
                 port_str = str(port)
-                if ":" in port_str:
-                    parts = port_str.split(":")
-                    if len(parts) >= 3:
-                        if parts[0] != "127.0.0.1":
-                            raise HTTPException(
-                                status_code=400,
-                                detail=f"Extension rejected: port binding '{port_str}' in {svc_name} must use 127.0.0.1",
-                            )
-                    elif len(parts) == 2:
-                        raise HTTPException(
-                            status_code=400,
-                            detail=f"Extension rejected: port binding '{port_str}' in {svc_name} must specify 127.0.0.1 prefix",
-                        )
-                else:
-                    # Bare port (e.g. "8080") — Docker binds 0.0.0.0
+                host_part, rest = _split_port_host(port_str)
+                if host_part is None:
+                    # No host_ip — Docker binds 0.0.0.0.
+                    label = "bare port" if ":" not in port_str else "port binding"
                     raise HTTPException(
                         status_code=400,
-                        detail=f"Extension rejected: bare port '{port_str}' in {svc_name} must use 127.0.0.1:host:container format",
+                        detail=(
+                            f"Extension rejected: {label} '{port_str}' in {svc_name} "
+                            f"must use 127.0.0.1:host:container format"
+                        ),
+                    )
+                if not _host_part_is_loopback(host_part):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"Extension rejected: port binding '{port_str}' "
+                            f"in {svc_name} must bind 127.0.0.1 "
+                            f"(literal or '${{VAR:-127.0.0.1}}')"
+                        ),
+                    )
+                # Strip optional "/proto" suffix before checking host_port:container_port.
+                core = rest.split("/", 1)[0]
+                if ":" not in core:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"Extension rejected: port binding '{port_str}' "
+                            f"in {svc_name} must specify host:host_port:container_port"
+                        ),
                     )
 
     # Scan top-level named volumes for bind-mount backdoors via driver_opts
@@ -500,6 +567,18 @@ _AGENT_TIMEOUT = 300  # seconds — image pulls can take several minutes on firs
 _AGENT_LOG_TIMEOUT = 30  # seconds — log fetches should be fast
 
 
+def _fetch_agent_logs(url: str, headers: dict, data: bytes, timeout: int) -> str:
+    """Blocking POST to host agent that returns the response body as text.
+
+    Extracted so async handlers can offload the urllib call via
+    ``asyncio.to_thread``. urllib.error.HTTPError / URLError raised inside
+    propagate back to the caller and are handled there.
+    """
+    req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return resp.read().decode()
+
+
 def _call_agent(action: str, service_id: str) -> bool:
     """Call host agent to start/stop a service. Returns True on success."""
     url = f"{AGENT_URL}/v1/extension/{action}"
@@ -512,8 +591,11 @@ def _call_agent(action: str, service_id: str) -> bool:
     try:
         with urllib.request.urlopen(req, timeout=_AGENT_TIMEOUT) as resp:
             return resp.status == 200
-    except Exception:
-        logger.warning("Host agent unreachable at %s — fallback to restart_required", AGENT_URL)
+    except (urllib.error.URLError, urllib.error.HTTPError, OSError, TimeoutError) as exc:
+        logger.warning(
+            "Host agent unreachable at %s — fallback to restart_required: %s",
+            AGENT_URL, exc,
+        )
         return False
 
 
@@ -528,9 +610,10 @@ def _call_agent_invalidate_compose_cache() -> None:
                 logger.warning(
                     "compose-flags cache invalidation returned HTTP %d", resp.status,
                 )
-    except Exception:
+    except (urllib.error.URLError, urllib.error.HTTPError, OSError, TimeoutError) as exc:
         logger.warning(
-            "Host agent unreachable for compose-flags invalidation at %s", AGENT_URL,
+            "Host agent unreachable for compose-flags invalidation at %s: %s",
+            AGENT_URL, exc,
         )
 
 
@@ -608,8 +691,10 @@ def _call_agent_compose_rename(action: str, service_id: str) -> bool:
     try:
         with urllib.request.urlopen(req, timeout=_AGENT_LOG_TIMEOUT) as resp:
             return resp.status == 200
-    except Exception:
-        logger.warning("Host agent unreachable for compose rename at %s", AGENT_URL)
+    except (urllib.error.URLError, urllib.error.HTTPError, OSError, TimeoutError) as exc:
+        logger.warning(
+            "Host agent unreachable for compose rename at %s: %s", AGENT_URL, exc,
+        )
         return False
 
 
@@ -628,7 +713,7 @@ def _check_agent_health() -> bool:
         req = urllib.request.Request(f"{AGENT_URL}/health")
         with urllib.request.urlopen(req, timeout=3) as resp:
             available = resp.status == 200
-    except Exception:
+    except (urllib.error.URLError, urllib.error.HTTPError, OSError, TimeoutError):
         available = False
     with _agent_cache_lock:
         _agent_cache.update(available=available, checked_at=time.monotonic())
@@ -670,7 +755,16 @@ async def extensions_catalog(
     api_key: str = Depends(verify_api_key),
 ):
     """Get the extensions catalog with computed status."""
-    asyncio.get_running_loop().run_in_executor(None, _cleanup_stale_progress)
+    _cleanup_future = asyncio.get_running_loop().run_in_executor(
+        None, _cleanup_stale_progress,
+    )
+
+    def _log_cleanup_error(f: asyncio.Future) -> None:
+        exc = f.exception()
+        if exc is not None:
+            logger.error("stale-progress cleanup failed: %s", exc, exc_info=exc)
+
+    _cleanup_future.add_done_callback(_log_cleanup_error)
 
     from helpers import get_cached_services, get_all_services
 
@@ -780,12 +874,14 @@ async def extensions_catalog(
     except OSError:
         lib_available = False
 
+    agent_available = await asyncio.to_thread(_check_agent_health)
+
     return {
         "extensions": extensions,
         "summary": summary,
         "gpu_backend": GPU_BACKEND,
         "library_available": lib_available,
-        "agent_available": _check_agent_health(),
+        "agent_available": agent_available,
     }
 
 
@@ -894,10 +990,11 @@ async def extension_logs(
         "Authorization": f"Bearer {DREAM_AGENT_KEY}",
     }
     data = json.dumps({"service_id": service_id, "tail": 100}).encode()
-    req = urllib.request.Request(url, data=data, headers=headers, method="POST")
     try:
-        with urllib.request.urlopen(req, timeout=_AGENT_LOG_TIMEOUT) as resp:
-            return json.loads(resp.read().decode())
+        body = await asyncio.to_thread(
+            _fetch_agent_logs, url, headers, data, _AGENT_LOG_TIMEOUT,
+        )
+        return json.loads(body)
     except urllib.error.HTTPError as exc:
         try:
             err_body = json.loads(exc.read().decode())
@@ -939,6 +1036,24 @@ def _install_from_library(service_id: str) -> None:
     if not source.is_dir():
         raise HTTPException(
             status_code=404, detail=f"Extension not found: {service_id}",
+        )
+
+    # Server-side install gate: refuse entries that have no deployable
+    # compose.yaml on disk (entries shipping only compose.yaml.disabled or
+    # compose.yaml.reference, e.g. dify, jan, fooocus). The catalog/UI hides
+    # the Install button for these via _is_installable, but a direct
+    # POST /api/extensions/{id}/install would otherwise succeed-without-effect:
+    # the directory gets copied to user-extensions/ but the host agent has
+    # nothing to start, surfacing as a cryptic post-install failure.
+    if not (source / "compose.yaml").exists():
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Extension '{service_id}' has no deployable compose.yaml "
+                f"and is not installable. Library entries that ship only "
+                f"compose.yaml.disabled or compose.yaml.reference files are "
+                f"reference material, not deployable services."
+            ),
         )
 
     dest = USER_EXTENSIONS_DIR / service_id

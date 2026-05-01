@@ -67,4 +67,16 @@ if grep -q 'cdn.jsdelivr.net/npm/chart.js\|cdn.jsdelivr.net/npm/chartjs-adapter-
   exit 1
 fi
 
+echo "[contract] installers pre-mark setup wizard complete"
+# All three installers must write data/config/setup-complete.json at install time
+# so the dashboard wizard doesn't reappear on every visit after a fresh install.
+# dashboard-api reads this file (container path /data/config/setup-complete.json,
+# mounted from ${INSTALL_DIR}/data) to decide first_run state.
+grep -q 'data/config/setup-complete.json' installers/phases/13-summary.sh \
+  || { echo "[FAIL] Linux phase 13 does not write data/config/setup-complete.json"; exit 1; }
+grep -q 'data/config/setup-complete.json' installers/macos/install-macos.sh \
+  || { echo "[FAIL] macOS installer does not write data/config/setup-complete.json"; exit 1; }
+grep -q 'data\\\\config\\\\setup-complete.json\|setup-complete.json' installers/windows/install-windows.ps1 \
+  || { echo "[FAIL] Windows installer does not write setup-complete.json"; exit 1; }
+
 echo "[PASS] installer contracts"

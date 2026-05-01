@@ -70,6 +70,7 @@ services:
   open-webui:
     environment:
       - OPENAI_API_KEY=no-key
+      - ENABLE_IMAGE_GENERATION=${ENABLE_IMAGE_GENERATION:-true}
 
   dashboard-api:
     environment:

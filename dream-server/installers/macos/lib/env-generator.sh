@@ -36,7 +36,7 @@ read_env_value() {
     local env_path="$1"
     local key="$2"
     [[ -f "$env_path" ]] || { echo ""; return 0; }
-    grep -E "^${key}=" "$env_path" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '\r' || true
+    grep -E "^${key}=" "$env_path" 2>/dev/null | sed -n '1p' | cut -d'=' -f2- | tr -d '\r' || true
 }
 
 # Read SearXNG secret_key from an existing settings.yml file.
@@ -48,7 +48,7 @@ read_searxng_secret() {
     [[ -f "$settings_path" ]] || { echo ""; return 0; }
     # Expected line format: secret_key: "...."
     grep -E '^[[:space:]]*secret_key:[[:space:]]*"' "$settings_path" 2>/dev/null \
-        | head -n 1 \
+        | sed -n '1p' \
         | sed -E 's/^[[:space:]]*secret_key:[[:space:]]*"([^"]+)".*$/\1/' \
         | tr -d '\r' || true
 }
@@ -116,6 +116,11 @@ generate_dream_env() {
         fi
         upsert_env_value "$env_path" "LLAMA_CPU_LIMIT" "$detected_cpu_limit"
         upsert_env_value "$env_path" "LLAMA_CPU_RESERVATION" "$detected_cpu_reservation"
+
+        # Upsert DREAM_AGENT_KEY when missing (pre-PR-#979 upgrade path)
+        if [[ -z "$(read_env_value "$env_path" "DREAM_AGENT_KEY")" ]]; then
+            upsert_env_value "$env_path" "DREAM_AGENT_KEY" "$(new_secure_hex 32)"
+        fi
         return 0
     fi
 
@@ -259,7 +264,7 @@ TIMEZONE=${tz}
 # NOTE: this value is only written on first install or --force (the macOS
 # env-generator early-returns when .env already exists). Users who re-run
 # ./install-macos.sh --langfuse on an existing install should instead use
-# post-install: `dream enable langfuse`.
+# post-install: 'dream enable langfuse'.
 LANGFUSE_ENABLED=${ENABLE_LANGFUSE:-false}
 LANGFUSE_NEXTAUTH_SECRET=${langfuse_nextauth_secret}
 LANGFUSE_SALT=${langfuse_salt}

@@ -155,7 +155,7 @@ read_env_value() {
     local env_file="$1"
     local key="$2"
     [[ -f "$env_file" ]] || { echo ""; return 0; }
-    grep -E "^${key}=" "$env_file" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '\r' || true
+    grep -E "^${key}=" "$env_file" 2>/dev/null | sed -n '1p' | cut -d'=' -f2- | tr -d '\r' || true
 }
 
 upsert_env_value() {
@@ -282,7 +282,7 @@ start_native_llama() {
     esac
 
     "$LLAMA_SERVER_BIN" \
-        --host 0.0.0.0 --port 8080 \
+        --host "${ENV_BIND_ADDRESS:-127.0.0.1}" --port 8080 \
         --model "$model_path" \
         --ctx-size "$ctx_size" \
         --n-gpu-layers 999 \

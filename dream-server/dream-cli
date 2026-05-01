@@ -31,23 +31,47 @@ if [[ -f "$INSTALL_DIR/.env" ]]; then
     [[ -n "${_v:-}" ]] && VERSION="$_v"
 fi
 
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-CYAN='\033[0;36m'
-NC='\033[0m'
+# Colors — use ANSI-C quoting ($'\033') so the variables hold real ESC bytes
+# at assignment time. Single-quoted strings store the backslash literally,
+# which breaks unquoted heredocs (cmd_help) that never re-interpret escapes.
+# Guard on TTY + NO_COLOR so redirected / piped output stays clean.
+# Per no-color.org, NO_COLOR disables colors when it is present (set to any
+# value, including empty), so we check set-ness with ${NO_COLOR+x} — which
+# expands to "x" whenever NO_COLOR is set and to "" only when truly unset —
+# rather than ${NO_COLOR:-} which would treat NO_COLOR="" as unset.
+if [[ -t 1 ]] && [[ -z "${NO_COLOR+x}" ]]; then
+    RED=$'\033[0;31m'
+    GREEN=$'\033[0;32m'
+    YELLOW=$'\033[1;33m'
+    BLUE=$'\033[0;34m'
+    CYAN=$'\033[0;36m'
+    NC=$'\033[0m'
+else
+    RED=''
+    GREEN=''
+    YELLOW=''
+    BLUE=''
+    CYAN=''
+    NC=''
+fi
 
 #=============================================================================
 # Helpers
 #=============================================================================
-log() { echo -e "${CYAN}[dream]${NC} $1"; }
+log() { echo -e "${CYAN}[dream]${NC} $1" >&2; }
 success() { echo -e "${GREEN}✓${NC} $1"; }
-warn() { echo -e "${YELLOW}⚠${NC} $1"; }
+warn() { echo -e "${YELLOW}⚠${NC} $1" >&2; }
 error() { echo -e "${RED}✗${NC} $1"; exit 1; }
 log_warn() { echo -e "${YELLOW}⚠${NC} $1"; }
 log_error() { echo -e "${RED}✗${NC} $1" >&2; }
+
+# Print a separator of repeated characters filling the given width.
+# Usage: hr <width> [<char=─>]
+hr() {
+    local w="${1:-10}" c="${2:-─}" out=''
+    printf -v out '%*s' "$w" ''
+    printf '%s' "${out// /$c}"
+}
 
 # Update or add a key=value in .env
 _env_set() {
@@ -251,7 +275,7 @@ _check_version_compat() {
 
     # 1. Installed version
     _COMPAT_INSTALLED_VER=$(grep '^DREAM_VERSION=' "$INSTALL_DIR/.env" 2>/dev/null \
-        | head -1 | cut -d= -f2 | tr -d '[:space:]')
+        | sed -n '1p' | cut -d= -f2 | tr -d '[:space:]' || true)
     # Fall back to .version file (written by dream-update.sh / PR #349 convention)
     if [[ -z "$_COMPAT_INSTALLED_VER" && -f "$INSTALL_DIR/.version" ]]; then
         _COMPAT_INSTALLED_VER=$(jq -r '.version // empty' "$INSTALL_DIR/.version" 2>/dev/null \
@@ -701,7 +725,26 @@ cmd_status_json() {
 
     # GPU summary (optional)
     local gpu_summary_json="null"
-    if command -v nvidia-smi >/dev/null 2>&1; then
+    if [[ "${GPU_BACKEND:-}" == "apple" ]]; then
+        # Apple Silicon: integrated GPU with unified memory. Surface the same
+        # fields as `dream gpu status` so consumers of status-json can render
+        # non-null GPU info on macOS.
+        local _chip _total_mem_gb _gpu_cores
+        _chip="$(sysctl -n machdep.cpu.brand_string 2>/dev/null || echo 'Apple Silicon')"
+        _total_mem_gb=$(( $(sysctl -n hw.memsize 2>/dev/null || echo 0) / 1024 / 1024 / 1024 ))
+        if command -v jq >/dev/null 2>&1; then
+            _gpu_cores=$(system_profiler SPDisplaysDataType -json 2>/dev/null \
+                | jq -r '.SPDisplaysDataType[0].sppci_cores // "?"' 2>/dev/null)
+        else
+            _gpu_cores="?"
+        fi
+        gpu_summary_json=$(jq -n \
+            --arg backend "apple" \
+            --arg chip "$_chip" \
+            --argjson unified_memory_gb "$_total_mem_gb" \
+            --arg gpu_cores "$_gpu_cores" \
+            '{backend: $backend, chip: $chip, unified_memory_gb: $unified_memory_gb, gpu_cores: $gpu_cores}')
+    elif command -v nvidia-smi >/dev/null 2>&1; then
         # Represent each GPU line as raw strings in an array
         gpu_summary_json=$(nvidia-smi --query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu \
             --format=csv,noheader,nounits 2>/dev/null | jq -R -s 'split("\n") | map(select(length > 0))')
@@ -833,7 +876,7 @@ cmd_dry_run() {
     local cur_ver="0.0.0"
     if [[ -f "$INSTALL_DIR/.env" ]]; then
         local _v
-        _v=$(grep '^DREAM_VERSION=' "$INSTALL_DIR/.env" 2>/dev/null | cut -d= -f2 | tr -d '[:space:]')
+        _v=$(grep '^DREAM_VERSION=' "$INSTALL_DIR/.env" 2>/dev/null | cut -d= -f2 | tr -d '[:space:]' || true)
         [[ -n "$_v" ]] && cur_ver="$_v"
     fi
     if [[ "$cur_ver" == "0.0.0" && -f "$INSTALL_DIR/.version" ]]; then
@@ -846,7 +889,7 @@ cmd_dry_run() {
     local api_json=""
     local dashboard_port="${DASHBOARD_PORT:-3002}"
     local api_key=""
-    api_key=$(grep '^DASHBOARD_API_KEY=' "$INSTALL_DIR/.env" 2>/dev/null | cut -d= -f2 | tr -d '[:space:]')
+    api_key=$(grep '^DASHBOARD_API_KEY=' "$INSTALL_DIR/.env" 2>/dev/null | cut -d= -f2 | tr -d '[:space:]' || true)
     if [[ -n "$api_key" ]]; then
         api_json=$(curl -sf --max-time 5 \
             -H "X-API-Key: ${api_key}" \
@@ -935,7 +978,7 @@ cmd_dry_run() {
     local key
     for key in "${model_keys[@]}"; do
         local val
-        val=$(grep "^${key}=" "$INSTALL_DIR/.env" 2>/dev/null | cut -d= -f2 | tr -d '[:space:]')
+        val=$(grep "^${key}=" "$INSTALL_DIR/.env" 2>/dev/null | cut -d= -f2 | tr -d '[:space:]' || true)
         printf "  %-16s %s\n" "${key}:" "${val:-(not set)}"
     done
     echo ""
@@ -950,7 +993,7 @@ cmd_dry_run() {
     else
         for key in "${update_keys[@]}"; do
             local val
-            val=$(grep "^${key}=" "$INSTALL_DIR/.env" 2>/dev/null | cut -d= -f2 | tr -d '[:space:]')
+            val=$(grep "^${key}=" "$INSTALL_DIR/.env" 2>/dev/null | cut -d= -f2 | tr -d '[:space:]' || true)
             printf "  %-16s %s\n" "${key}:" "${val:-(not set)}"
         done
     fi
@@ -1079,12 +1122,56 @@ cmd_shell() {
     check_install
     cd "$INSTALL_DIR"
 
-    local service="${1:-$(sr_resolve llm)}"
+    # Load the service registry so SERVICE_IDS is populated in our shell.
+    sr_load
+
+    # Resolve aliases (e.g. "llm" -> "llama-server").
+    local service
+    service=$(sr_resolve "${1:-llm}")
+
+    # Validate against registry before doing anything.
+    local _found=false
+    for _sid in "${SERVICE_IDS[@]}"; do
+        if [[ "$_sid" == "$service" ]]; then
+            _found=true
+            break
+        fi
+    done
+    if ! $_found; then
+        error "Unknown service: $service"
+    fi
+
     local container
     container=$(sr_container "$service")
 
+    # Distinguish "daemon down" from "container stopped" — the container-running
+    # check below uses `docker ps`, which also exits non-zero when the daemon
+    # is unreachable. Without this preflight a user whose Docker is stopped
+    # sees "Container X is not running" and tries `dream start`, which also
+    # fails, creating a confusing loop. The explicit check lets the error
+    # reflect the actual cause.
+    #
+    # `docker info` can hang for 20+ seconds when Docker Desktop is mid-boot
+    # (socket exists, daemon not yet accepting RPCs). `timeout` isn't stock
+    # macOS, but `perl alarm` is (perl ships with macOS ≥ 10.5 and every
+    # Linux/WSL2 distro we target). `alarm` is inherited across `exec`, so
+    # the docker process receives SIGALRM after 3s if it hasn't returned.
+    if ! perl -e 'alarm 3; exec "docker", "info"' >/dev/null 2>&1; then
+        error "Docker is not running (or not responding within 3s). Start Docker Desktop / dockerd and retry."
+    fi
+
+    # Confirm the container is running before trying to exec.
+    if ! docker ps 2>/dev/null --format '{{.Names}}' | grep -qx "$container"; then
+        error "Container $container is not running. Start it with: dream start $service"
+    fi
+
     log "Opening shell in $container..."
-    docker exec -it "$container" /bin/bash || docker exec -it "$container" /bin/sh
+    # Distinguish "no bash binary" from "exec failed" by probing first.
+    if docker exec "$container" test -x /bin/bash >/dev/null 2>&1; then
+        docker exec -it "$container" /bin/bash
+    else
+        docker exec -it "$container" /bin/sh
+    fi
 }
 
 cmd_config() {
@@ -1431,7 +1518,7 @@ cmd_enable() {
         local current_backend="${GPU_BACKEND:-nvidia}"
         if [[ -f "$INSTALL_DIR/.env" ]]; then
             local env_backend
-            env_backend=$(grep "^GPU_BACKEND=" "$INSTALL_DIR/.env" | cut -d= -f2 | tr -d '"')
+            env_backend=$(grep "^GPU_BACKEND=" "$INSTALL_DIR/.env" 2>/dev/null | cut -d= -f2 | tr -d '"' || true)
             if [[ -n "$env_backend" ]]; then
                 current_backend="$env_backend"
             else
@@ -1652,7 +1739,7 @@ cmd_list() {
     active_flags=$(get_compose_flags)
     echo -e "${BLUE}━━━ Available Services ━━━${NC}"
     printf "%-20s %-12s %-10s\n" "SERVICE" "CATEGORY" "STATUS"
-    printf "%-20s %-12s %-10s\n" "───────" "────────" "──────"
+    printf "%-20s %-12s %-10s\n" "$(hr 20)" "$(hr 12)" "$(hr 10)"
     for sid in "${SERVICE_IDS[@]}"; do
         local cat="${SERVICE_CATEGORIES[$sid]}"
         local cf="${SERVICE_COMPOSE[$sid]}"
@@ -1778,7 +1865,7 @@ META
             if [[ -f "$preset_dir/env" ]]; then
                 cp "$preset_dir/env" "$INSTALL_DIR/.env"
                 local restored_mode
-                restored_mode=$(grep "^DREAM_MODE=" "$INSTALL_DIR/.env" 2>/dev/null | cut -d= -f2)
+                restored_mode=$(grep "^DREAM_MODE=" "$INSTALL_DIR/.env" 2>/dev/null | cut -d= -f2 || true)
                 success "Restored .env (mode: ${restored_mode:-local})"
             fi
 
@@ -1821,7 +1908,7 @@ META
             fi
 
             printf "  %-20s %-22s %-10s\n" "NAME" "CREATED" "BACKEND"
-            printf "  %-20s %-22s %-10s\n" "────" "───────" "───────"
+            printf "  %-20s %-22s %-10s\n" "$(hr 20)" "$(hr 22)" "$(hr 10)"
             for dir in "$PRESETS_DIR"/*/; do
                 [[ -d "$dir" ]] || continue
                 local pname
@@ -2571,6 +2658,21 @@ _gpu_status() {
             card=$(basename "$(dirname "$card_dir")")
             echo "  $card  $name  $(awk "BEGIN{printf \"%.1f / %.1f GB\", $vram_used/1073741824, $vram_total/1073741824}")  ${busy}%"
         done
+    elif [[ "${GPU_BACKEND:-}" == "apple" ]]; then
+        local _chip _total_mem_gb _gpu_cores
+        _chip="$(sysctl -n machdep.cpu.brand_string 2>/dev/null || echo 'Apple Silicon')"
+        _total_mem_gb=$(( $(sysctl -n hw.memsize 2>/dev/null || echo 0) / 1024 / 1024 / 1024 ))
+        if command -v jq >/dev/null 2>&1; then
+            _gpu_cores=$(system_profiler SPDisplaysDataType -json 2>/dev/null \
+                | jq -r '.SPDisplaysDataType[0].sppci_cores // "?"' 2>/dev/null)
+        else
+            _gpu_cores="?"
+        fi
+        echo ""
+        echo "  Chip:             $_chip"
+        echo "  Unified memory:   ${_total_mem_gb} GB"
+        echo "  GPU cores:        $_gpu_cores"
+        echo "  (Apple Silicon integrated GPU — unified memory shared with CPU)"
     else
         warn "GPU status unavailable: nvidia-smi not found and GPU_BACKEND is not amd"
     fi
@@ -2593,6 +2695,11 @@ _gpu_topology() {
         echo "  AMD multi-GPU topology detection not yet supported."
         echo "  Use 'dream gpu status' to see per-card utilization."
         return
+    fi
+
+    if [[ "${GPU_BACKEND:-}" == "apple" ]]; then
+        echo "  Single integrated GPU (Apple Silicon, unified memory) — no multi-GPU topology to display."
+        return 0
     fi
 
     if ! command -v nvidia-smi &>/dev/null; then
@@ -2731,6 +2838,16 @@ _gpu_validate() {
     echo -e "${BLUE}━━━ GPU Validate ━━━${NC}"
     echo ""
 
+    # Apple Silicon is a single integrated GPU with unified memory —
+    # GPU_COUNT / multi-GPU assignment / split-mode checks do not apply.
+    # Report a clean skip rather than emitting false-positive failures.
+    if [[ "${GPU_BACKEND:-}" == "apple" ]]; then
+        echo "  Apple Silicon: single integrated GPU (unified memory) — no multi-GPU validation needed."
+        echo ""
+        echo "  Result: 0 check(s) passed, 0 failed"
+        return 0
+    fi
+
     local pass=0 fail=0
 
     # Check 1: GPU_COUNT matches actual
@@ -2820,6 +2937,11 @@ _gpu_reassign() {
     echo -e "${BLUE}━━━ GPU Reassign ━━━${NC}"
     echo ""
 
+    if [[ "${GPU_BACKEND:-}" == "apple" ]]; then
+        warn "GPU reassignment is not applicable on Apple Silicon (single integrated GPU)."
+        return 1
+    fi
+
     if ! command -v nvidia-smi &>/dev/null; then
         warn "GPU reassign is only supported for NVIDIA. Use 'dream gpu status' for AMD."
         return
@@ -2866,7 +2988,7 @@ _gpu_reassign() {
     # Write topology to tmpfile and run assignment
     local tmpdir
     tmpdir=$(mktemp -d)
-    trap 'rm -rf "$tmpdir"' RETURN
+    trap "rm -rf '$tmpdir'" RETURN
     echo "$topo_json" > "$tmpdir/topo.json"
 
     local enabled_services="${ENABLED_SERVICES:-llama_server,whisper,comfyui,embeddings}"
@@ -3088,9 +3210,10 @@ _template_list() {
         return 0
     fi
 
-    local found=0
-    printf "${CYAN}%-20s %-30s %-6s %s${NC}\n" "ID" "NAME" "TIER" "SERVICES"
-    printf "%-20s %-30s %-6s %s\n" "----" "----" "----" "--------"
+    # First pass: collect template rows and compute max ID width so the
+    # column fits IDs like "personal-knowledge-base" (23) without overflow.
+    local -a rows=()
+    local max_id_len=2  # at minimum, wide enough for the "ID" header
 
     for f in "$templates_dir"/*.yaml "$templates_dir"/*.yml; do
         [[ -f "$f" ]] || continue
@@ -3111,14 +3234,29 @@ if tid:
 PYEOF
         ) || continue
         [[ -z "$info" ]] && continue
-        IFS=$'\t' read -r tid tname ttier tsvcs <<< "$info"
-        printf "%-20s %-30s %-6s %s\n" "$tid" "$tname" "$ttier" "$tsvcs"
-        found=1
+        rows+=("$info")
+        local this_id="${info%%$'\t'*}"
+        (( ${#this_id} > max_id_len )) && max_id_len=${#this_id}
     done
 
-    if [[ "$found" -eq 0 ]]; then
+    if [[ ${#rows[@]} -eq 0 ]]; then
         log "No templates found."
+        return 0
     fi
+
+    # Second pass: emit header, full-width separator, and rows using the
+    # dynamic ID column width. `hr` produces separators that span each
+    # column exactly, replacing the old hard-coded "----" dashes that
+    # left visible gaps under %-Ns padding.
+    printf "${CYAN}%-*s %-30s %-6s %s${NC}\n" "$max_id_len" "ID" "NAME" "TIER" "SERVICES"
+    printf "%-*s %-30s %-6s %s\n" \
+        "$max_id_len" "$(hr "$max_id_len")" "$(hr 30)" "$(hr 6)" "$(hr 8)"
+
+    local row tid tname ttier tsvcs
+    for row in "${rows[@]}"; do
+        IFS=$'\t' read -r tid tname ttier tsvcs <<< "$row"
+        printf "%-*s %-30s %-6s %s\n" "$max_id_len" "$tid" "$tname" "$ttier" "$tsvcs"
+    done
 }
 
 _template_preview() {

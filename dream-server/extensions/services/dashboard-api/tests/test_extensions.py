@@ -448,6 +448,67 @@ class TestInstallExtension:
         )
         assert resp.status_code == 404
 
+    def test_install_rejects_library_entry_without_compose(
+        self, test_client, monkeypatch, tmp_path,
+    ):
+        """400 when the library entry exists but ships no deployable compose.yaml.
+
+        Mirrors the dify/jan/fooocus shape: directory present, manifest
+        present, but only `compose.yaml.disabled` or `compose.yaml.reference`
+        on disk. The catalog/UI already hides the Install button for these via
+        `_is_installable`, but a direct POST must also reject — otherwise the
+        copytree succeeds but the host agent can't start anything, surfacing
+        as a cryptic post-install failure instead of a clean 400.
+        """
+        lib_dir = tmp_path / "lib"
+        lib_dir.mkdir(exist_ok=True)
+        ext_dir = lib_dir / "reference-only"
+        ext_dir.mkdir(exist_ok=True)
+        # Only .disabled — no deployable compose.yaml
+        (ext_dir / "compose.yaml.disabled").write_text(_SAFE_COMPOSE)
+        (ext_dir / "manifest.yaml").write_text(yaml.dump({
+            "schema_version": "dream.services.v1",
+            "service": {"id": "reference-only", "name": "reference-only"},
+        }))
+        _patch_mutation_config(monkeypatch, tmp_path, lib_dir=lib_dir)
+
+        resp = test_client.post(
+            "/api/extensions/reference-only/install",
+            headers=test_client.auth_headers,
+        )
+        assert resp.status_code == 400
+        body = resp.json()
+        assert "compose.yaml" in body["detail"]
+        # Verify nothing was copied to user-extensions/
+        assert not (tmp_path / "user" / "reference-only").exists()
+
+    def test_install_rejects_library_entry_with_only_reference_compose(
+        self, test_client, monkeypatch, tmp_path,
+    ):
+        """Same shape, .reference suffix variant (mirrors fooocus).
+
+        Some library entries ship `compose.yaml.reference` instead of
+        `.disabled`. Either suffix is reference material — only literal
+        `compose.yaml` is deployable.
+        """
+        lib_dir = tmp_path / "lib"
+        lib_dir.mkdir(exist_ok=True)
+        ext_dir = lib_dir / "reference-only"
+        ext_dir.mkdir(exist_ok=True)
+        (ext_dir / "compose.yaml.reference").write_text(_SAFE_COMPOSE)
+        (ext_dir / "manifest.yaml").write_text(yaml.dump({
+            "schema_version": "dream.services.v1",
+            "service": {"id": "reference-only", "name": "reference-only"},
+        }))
+        _patch_mutation_config(monkeypatch, tmp_path, lib_dir=lib_dir)
+
+        resp = test_client.post(
+            "/api/extensions/reference-only/install",
+            headers=test_client.auth_headers,
+        )
+        assert resp.status_code == 400
+        assert not (tmp_path / "user" / "reference-only").exists()
+
     def test_install_core_service_403(self, test_client, monkeypatch, tmp_path):
         """403 when trying to install a core service."""
         _patch_mutation_config(monkeypatch, tmp_path)
@@ -1099,6 +1160,95 @@ class TestComposeScanEdgeCases:
         assert resp.status_code == 400
         assert "127.0.0.1" in resp.json()["detail"]
 
+    def test_scan_allows_bind_address_var_with_loopback_default(
+        self, test_client, monkeypatch, tmp_path,
+    ):
+        """${BIND_ADDRESS:-127.0.0.1} is the sanctioned LAN-toggle pattern (PR #964)."""
+        compose = (
+            "services:\n  svc:\n    image: test:latest\n"
+            "    ports:\n      - '${BIND_ADDRESS:-127.0.0.1}:8080:80'\n"
+        )
+        lib_dir = _setup_library_ext(tmp_path, "bind-ok", compose_content=compose)
+        _patch_mutation_config(monkeypatch, tmp_path, lib_dir=lib_dir)
+
+        resp = test_client.post(
+            "/api/extensions/bind-ok/install",
+            headers=test_client.auth_headers,
+        )
+        assert resp.status_code == 200
+
+    def test_scan_allows_arbitrary_var_name_with_loopback_default(
+        self, test_client, monkeypatch, tmp_path,
+    ):
+        """Any ${VAR:-127.0.0.1} form is accepted, not just BIND_ADDRESS."""
+        compose = (
+            "services:\n  svc:\n    image: test:latest\n"
+            "    ports:\n      - '${MY_HOST:-127.0.0.1}:8080:80'\n"
+        )
+        lib_dir = _setup_library_ext(tmp_path, "bind-var", compose_content=compose)
+        _patch_mutation_config(monkeypatch, tmp_path, lib_dir=lib_dir)
+
+        resp = test_client.post(
+            "/api/extensions/bind-var/install",
+            headers=test_client.auth_headers,
+        )
+        assert resp.status_code == 200
+
+    def test_scan_rejects_var_with_non_loopback_default(
+        self, test_client, monkeypatch, tmp_path,
+    ):
+        """A variable defaulting to 0.0.0.0 must NOT be accepted."""
+        compose = (
+            "services:\n  svc:\n    image: test\n"
+            "    ports:\n      - '${BIND_ADDRESS:-0.0.0.0}:8080:80'\n"
+        )
+        lib_dir = _setup_library_ext(tmp_path, "bad-default", compose_content=compose)
+        _patch_mutation_config(monkeypatch, tmp_path, lib_dir=lib_dir)
+
+        resp = test_client.post(
+            "/api/extensions/bad-default/install",
+            headers=test_client.auth_headers,
+        )
+        assert resp.status_code == 400
+        assert "127.0.0.1" in resp.json()["detail"]
+
+    def test_scan_rejects_var_without_default(
+        self, test_client, monkeypatch, tmp_path,
+    ):
+        """A bare ${VAR} (no default) is unsafe — it binds 0.0.0.0 when unset."""
+        compose = (
+            "services:\n  svc:\n    image: test\n"
+            "    ports:\n      - '${BIND_ADDRESS}:8080:80'\n"
+        )
+        lib_dir = _setup_library_ext(tmp_path, "no-default", compose_content=compose)
+        _patch_mutation_config(monkeypatch, tmp_path, lib_dir=lib_dir)
+
+        resp = test_client.post(
+            "/api/extensions/no-default/install",
+            headers=test_client.auth_headers,
+        )
+        assert resp.status_code == 400
+        assert "127.0.0.1" in resp.json()["detail"]
+
+    def test_scan_allows_dict_port_with_bind_address_default(
+        self, test_client, monkeypatch, tmp_path,
+    ):
+        """Dict-form port with host_ip: ${VAR:-127.0.0.1} is also accepted."""
+        compose = (
+            "services:\n  svc:\n    image: test:latest\n"
+            "    ports:\n      - target: 80\n"
+            "        published: 8080\n"
+            "        host_ip: '${BIND_ADDRESS:-127.0.0.1}'\n"
+        )
+        lib_dir = _setup_library_ext(tmp_path, "dict-ok", compose_content=compose)
+        _patch_mutation_config(monkeypatch, tmp_path, lib_dir=lib_dir)
+
+        resp = test_client.post(
+            "/api/extensions/dict-ok/install",
+            headers=test_client.auth_headers,
+        )
+        assert resp.status_code == 200
+
     def test_scan_rejects_core_service_name(
         self, test_client, monkeypatch, tmp_path,
     ):
@@ -1273,6 +1423,191 @@ class TestComposeScanEdgeCases:
         )
         assert resp.status_code == 400
         assert "GPU passthrough" in resp.json()["detail"]
+
+
+# --- Direct unit tests for the port-binding helpers ---
+
+
+class TestHostPartIsLoopback:
+    """Direct unit tests for `_host_part_is_loopback` — pin the regex
+    behaviour against future refactors. Triggered through the install
+    endpoint by TestComposeScanEdgeCases above; these tests are the
+    fast-feedback layer."""
+
+    def test_literal_loopback(self):
+        from routers.extensions import _host_part_is_loopback
+        assert _host_part_is_loopback("127.0.0.1") is True
+
+    def test_var_with_loopback_default(self):
+        from routers.extensions import _host_part_is_loopback
+        assert _host_part_is_loopback("${BIND_ADDRESS:-127.0.0.1}") is True
+        assert _host_part_is_loopback("${MY_HOST:-127.0.0.1}") is True
+
+    def test_rejects_var_without_default(self):
+        from routers.extensions import _host_part_is_loopback
+        assert _host_part_is_loopback("${BIND_ADDRESS}") is False
+
+    def test_rejects_non_loopback_default(self):
+        from routers.extensions import _host_part_is_loopback
+        assert _host_part_is_loopback("${BIND_ADDRESS:-0.0.0.0}") is False
+        assert _host_part_is_loopback("${BIND_ADDRESS:-localhost}") is False
+
+    def test_rejects_assignment_default_form(self):
+        """Compose's ${VAR:=default} (assignment) is not the same as
+        ${VAR:-default} (substitution); reject defensively."""
+        from routers.extensions import _host_part_is_loopback
+        assert _host_part_is_loopback("${BIND_ADDRESS:=127.0.0.1}") is False
+
+    def test_rejects_dash_only_default_form(self):
+        """${VAR-default} (only-if-unset) differs from ${VAR:-default}
+        (only-if-unset-or-empty). Strictly require the colon form."""
+        from routers.extensions import _host_part_is_loopback
+        assert _host_part_is_loopback("${BIND_ADDRESS-127.0.0.1}") is False
+
+    def test_rejects_zero_padded_loopback(self):
+        from routers.extensions import _host_part_is_loopback
+        assert _host_part_is_loopback("127.000.000.001") is False
+        assert _host_part_is_loopback("${BIND_ADDRESS:-127.000.000.001}") is False
+
+    def test_rejects_ipv6_loopback(self):
+        """IPv6 binds aren't in scope for the LAN toggle."""
+        from routers.extensions import _host_part_is_loopback
+        assert _host_part_is_loopback("::1") is False
+        assert _host_part_is_loopback("[::1]") is False
+
+    def test_rejects_trailing_newline(self):
+        """fullmatch must defend against `$` matching before \\n."""
+        from routers.extensions import _host_part_is_loopback
+        assert _host_part_is_loopback("127.0.0.1\n") is False
+        assert _host_part_is_loopback("${BIND_ADDRESS:-127.0.0.1}\n") is False
+
+    def test_rejects_empty_and_whitespace(self):
+        from routers.extensions import _host_part_is_loopback
+        assert _host_part_is_loopback("") is False
+        assert _host_part_is_loopback(" 127.0.0.1") is False
+        assert _host_part_is_loopback("127.0.0.1 ") is False
+
+
+class TestSplitPortHost:
+    """Direct unit tests for `_split_port_host` — naive str.split(':') is
+    wrong on the `:-` default operator inside `${VAR:-127.0.0.1}`. These
+    tests pin the malformed-input behaviour as fail-closed."""
+
+    def test_literal_host_three_parts(self):
+        from routers.extensions import _split_port_host
+        assert _split_port_host("127.0.0.1:8080:80") == ("127.0.0.1", "8080:80")
+
+    def test_var_with_default(self):
+        from routers.extensions import _split_port_host
+        assert _split_port_host("${BIND_ADDRESS:-127.0.0.1}:8080:80") == (
+            "${BIND_ADDRESS:-127.0.0.1}", "8080:80",
+        )
+
+    def test_var_with_default_and_proto(self):
+        from routers.extensions import _split_port_host
+        assert _split_port_host("${BIND_ADDRESS:-127.0.0.1}:8554:8554/udp") == (
+            "${BIND_ADDRESS:-127.0.0.1}", "8554:8554/udp",
+        )
+
+    def test_var_no_default(self):
+        """`${VAR}:8080:80` — no `:-` default, but still has the brace."""
+        from routers.extensions import _split_port_host
+        assert _split_port_host("${BIND_ADDRESS}:8080:80") == (
+            "${BIND_ADDRESS}", "8080:80",
+        )
+
+    def test_var_with_default_alone(self):
+        """`${VAR:-127.0.0.1}` with NO host:container suffix — must
+        return rest='' so the caller's `':' not in core` check kicks in."""
+        from routers.extensions import _split_port_host
+        host, rest = _split_port_host("${BIND_ADDRESS:-127.0.0.1}")
+        assert rest == ""
+
+    def test_malformed_no_closing_brace(self):
+        """`${VAR:-127.0.0.1` (missing `}`) — fail closed."""
+        from routers.extensions import _split_port_host
+        host, rest = _split_port_host("${BIND_ADDRESS:-127.0.0.1")
+        assert rest == ""
+
+    def test_malformed_no_separator_after_brace(self):
+        """`${VAR:-127.0.0.1}8080:80` (no `:` between `}` and host port)."""
+        from routers.extensions import _split_port_host
+        host, rest = _split_port_host("${BIND_ADDRESS:-127.0.0.1}8080:80")
+        assert rest == ""
+
+    def test_two_part_with_digit_host_returns_no_host(self):
+        """`8080:80` — host position is a port number, no host_ip; treat
+        as no-host so caller rejects (binds 0.0.0.0)."""
+        from routers.extensions import _split_port_host
+        assert _split_port_host("8080:80") == (None, "8080:80")
+
+    def test_bare_port_returns_no_host(self):
+        from routers.extensions import _split_port_host
+        assert _split_port_host("8080") == (None, "8080")
+
+    def test_empty_string(self):
+        from routers.extensions import _split_port_host
+        assert _split_port_host("") == (None, "")
+
+
+class TestScanComposePortBindingRegressionLocks:
+    """Regression locks for forms that must STAY rejected even though
+    they vaguely look like loopback bindings."""
+
+    def test_ipv6_loopback_bracketed_rejected(
+        self, test_client, monkeypatch, tmp_path,
+    ):
+        """`[::1]:8080:80` is not in the policy; must be rejected."""
+        compose = (
+            "services:\n  svc:\n    image: test\n"
+            "    ports:\n      - '[::1]:8080:80'\n"
+        )
+        lib_dir = _setup_library_ext(tmp_path, "ipv6-ext", compose_content=compose)
+        _patch_mutation_config(monkeypatch, tmp_path, lib_dir=lib_dir)
+
+        resp = test_client.post(
+            "/api/extensions/ipv6-ext/install",
+            headers=test_client.auth_headers,
+        )
+        assert resp.status_code == 400
+        assert "127.0.0.1" in resp.json()["detail"]
+
+    def test_var_with_proto_suffix_accepted(
+        self, test_client, monkeypatch, tmp_path,
+    ):
+        """`${VAR:-127.0.0.1}:8554:8554/udp` is the sanctioned pattern
+        with an explicit /proto suffix (e.g. frigate's WebRTC port)."""
+        compose = (
+            "services:\n  svc:\n    image: test:latest\n"
+            "    ports:\n      - '${BIND_ADDRESS:-127.0.0.1}:8554:8554/udp'\n"
+        )
+        lib_dir = _setup_library_ext(tmp_path, "udp-ext", compose_content=compose)
+        _patch_mutation_config(monkeypatch, tmp_path, lib_dir=lib_dir)
+
+        resp = test_client.post(
+            "/api/extensions/udp-ext/install",
+            headers=test_client.auth_headers,
+        )
+        assert resp.status_code == 200
+
+    def test_hostname_in_host_position_rejected(
+        self, test_client, monkeypatch, tmp_path,
+    ):
+        """A hostname like `localhost` is not loopback under the regex —
+        the runtime resolution might not even resolve to 127.0.0.1
+        (IPv6 ::1, /etc/hosts override, etc.)."""
+        compose = (
+            "services:\n  svc:\n    image: test\n"
+            "    ports:\n      - 'localhost:8080:80'\n"
+        )
+        lib_dir = _setup_library_ext(tmp_path, "host-ext", compose_content=compose)
+        _patch_mutation_config(monkeypatch, tmp_path, lib_dir=lib_dir)
+
+        resp = test_client.post(
+            "/api/extensions/host-ext/install",
+            headers=test_client.auth_headers,
+        )
+        assert resp.status_code == 400
 
 
 # --- skip_name_collision flag isolation ---
@@ -2403,3 +2738,63 @@ class TestAssertNotCoreAllowsBuiltins:
         with pytest.raises(HTTPException) as exc_info:
             _assert_not_core(service_id)
         assert exc_info.value.status_code == 403
+
+
+class TestCallAgentErrorNarrowing:
+    """_call_agent swallows network errors but not programmer errors."""
+
+    def test_call_agent_returns_false_on_urlerror(self, monkeypatch, caplog):
+        """Network failures produce (False, warning) — callers rely on this."""
+        import logging
+        import urllib.error
+        from routers import extensions as ext_module
+
+        def _raise(*_args, **_kwargs):
+            raise urllib.error.URLError("timeout")
+
+        monkeypatch.setattr(ext_module.urllib.request, "urlopen", _raise)
+        with caplog.at_level(logging.WARNING, logger="routers.extensions"):
+            result = ext_module._call_agent("start", "svc-x")
+
+        assert result is False
+        assert any("Host agent unreachable" in r.message for r in caplog.records)
+
+    def test_call_agent_reraises_non_network_errors(self, monkeypatch):
+        """Programmer errors (e.g. AttributeError) must not be swallowed."""
+        from routers import extensions as ext_module
+
+        def _raise(*_args, **_kwargs):
+            raise AttributeError("boom")
+
+        monkeypatch.setattr(ext_module.urllib.request, "urlopen", _raise)
+        with pytest.raises(AttributeError):
+            ext_module._call_agent("start", "svc-x")
+
+    def test_catalog_logs_when_cleanup_future_fails(
+        self, test_client, monkeypatch, tmp_path, caplog,
+    ):
+        """Stale-progress cleanup failures are logged, not lost to fire-and-forget."""
+        import logging
+
+        catalog = [_make_catalog_ext("test-svc", "Test Service")]
+        _patch_extensions_config(monkeypatch, catalog, tmp_path=tmp_path)
+
+        def _boom():
+            raise RuntimeError("cleanup exploded")
+
+        monkeypatch.setattr(
+            "routers.extensions._cleanup_stale_progress", _boom,
+        )
+
+        with caplog.at_level(logging.ERROR, logger="routers.extensions"):
+            with patch("helpers.get_all_services", new_callable=AsyncMock,
+                       return_value=[]):
+                resp = test_client.get(
+                    "/api/extensions/catalog",
+                    headers=test_client.auth_headers,
+                )
+
+        assert resp.status_code == 200
+        assert any(
+            "stale-progress cleanup failed" in r.message for r in caplog.records
+        )

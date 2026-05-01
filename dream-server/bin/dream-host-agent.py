@@ -165,6 +165,65 @@ def resolve_compose_flags() -> list:
     return result.stdout.strip().split()
 
 
+# Filesystem types that silently ignore POSIX ownership/permissions.
+# Used by _precreate_data_dirs to skip os.chown when running on exFAT/FAT/NTFS-fuseblk
+# instead of raising a misleading PermissionError.
+_NON_POSIX_FS = frozenset({
+    "exfat", "msdos", "vfat", "fat", "fat32", "fat16",
+    "ntfs", "ntfs-3g", "fuseblk", "9p", "drvfs",
+    "ms-dos",
+})
+
+
+def _fs_type(path: Path) -> str | None:
+    """Return the lowercased filesystem type for ``path``, or ``None``.
+
+    Linux: walk /proc/self/mountinfo to find the longest matching mountpoint.
+    macOS / BSD: shell out to ``stat -f %T`` (Python's ``os.statvfs_result``
+    does not expose ``f_basetype``).
+    """
+    try:
+        target = str(Path(path).resolve())
+    except OSError:
+        return None
+
+    mountinfo = Path("/proc/self/mountinfo")
+    if mountinfo.exists():
+        try:
+            best_match = ""
+            best_fstype: str | None = None
+            with mountinfo.open("r", encoding="utf-8") as f:
+                for line in f:
+                    parts = line.split()
+                    if "-" not in parts:
+                        continue
+                    sep_idx = parts.index("-")
+                    if sep_idx + 1 >= len(parts) or sep_idx < 5:
+                        continue
+                    mountpoint = parts[4]
+                    fstype = parts[sep_idx + 1]
+                    if target == mountpoint or target.startswith(mountpoint.rstrip("/") + "/"):
+                        if len(mountpoint) >= len(best_match):
+                            best_match = mountpoint
+                            best_fstype = fstype
+            if best_fstype:
+                return best_fstype.lower()
+        except OSError:
+            pass
+
+    try:
+        result = subprocess.run(
+            ["stat", "-f", "%T", target],
+            capture_output=True, text=True, timeout=5, check=False,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip().lower()
+    except (FileNotFoundError, subprocess.SubprocessError):
+        pass
+
+    return None
+
+
 def _precreate_data_dirs(service_id: str):
     """Pre-create data directories for an extension with correct ownership."""
     ext_dir = USER_EXTENSIONS_DIR / service_id
@@ -210,7 +269,20 @@ def _precreate_data_dirs(service_id: str):
                 try:
                     dir_path.mkdir(parents=True, exist_ok=True)
                     if uid is not None and os.getuid() == 0:
-                        os.chown(str(dir_path), uid, uid)
+                        # Defense-in-depth: the installer preflight already
+                        # blocks non-POSIX filesystems at INSTALL_DIR, but
+                        # runtime extension installs (post-setup) can still
+                        # land on a non-POSIX volume. chown there is a silent
+                        # no-op or raises EPERM/EOPNOTSUPP — skip cleanly.
+                        fs = _fs_type(dir_path)
+                        if fs in _NON_POSIX_FS:
+                            logger.warning(
+                                "Skipping chown for %s on non-POSIX filesystem %s "
+                                "(extension may not function correctly)",
+                                dir_path, fs,
+                            )
+                        else:
+                            os.chown(str(dir_path), uid, uid)
                 except OSError as e:
                     logger.warning("Failed to pre-create %s: %s", dir_path, e)
 
@@ -267,6 +339,29 @@ def docker_compose_recreate(service_ids: list[str]) -> tuple:
         return (True, "") if result.returncode == 0 else (False, result.stderr[:500] or result.stdout[:500])
     except subprocess.TimeoutExpired:
         return False, f"Docker compose operation timed out ({SUBPROCESS_TIMEOUT_START}s)"
+
+
+def _post_install_core_recreate(service_id: str) -> None:
+    """Force-recreate core services whose env was overridden by ``service_id``'s
+    compose.yaml overlay.
+
+    ``docker compose up -d <ext>`` (how _handle_install starts the extension)
+    will not pick up overlay changes targeting already-running core services
+    without ``--force-recreate``. openclaw's compose.yaml appends an
+    OPENAI_API_BASE_URLS entry to open-webui; without this post-install
+    recreate that overlay is silently ignored until the next core restart.
+
+    Failure is logged and swallowed — the extension itself is already running;
+    the overlay will apply on the next manual restart of the core service.
+    """
+    if service_id != "openclaw":
+        return
+    ok, err = docker_compose_recreate(["open-webui"])
+    if not ok:
+        logger.warning(
+            "Post-install recreate of open-webui failed after openclaw install: %s",
+            err,
+        )
 
 
 def _parse_mem_value(s: str) -> float:
@@ -1148,7 +1243,7 @@ class AgentHandler(BaseHTTPRequestHandler):
                 _write_progress(service_id, "starting", "Starting container...")
                 _precreate_data_dirs(service_id)
                 start_result = subprocess.run(
-                    ["docker", "compose"] + flags + ["up", "-d", "--no-deps", service_id],
+                    ["docker", "compose"] + flags + ["up", "-d", service_id],
                     cwd=str(INSTALL_DIR), capture_output=True, text=True,
                     timeout=SUBPROCESS_TIMEOUT_START,
                 )
@@ -1159,6 +1254,18 @@ class AgentHandler(BaseHTTPRequestHandler):
 
                 # Step 4: Success
                 _write_progress(service_id, "started", "Service started")
+
+                # Step 5: Post-install core recreate (best-effort, non-fatal).
+                # Some extensions (e.g. openclaw) add overlay env to already-
+                # running core services; `up -d <ext>` (without --force-recreate)
+                # won't apply those changes. Failure here must not fail the install.
+                try:
+                    _post_install_core_recreate(service_id)
+                except Exception:
+                    logger.exception(
+                        "Post-install core recreate raised for %s (ignored)",
+                        service_id,
+                    )
 
             except subprocess.TimeoutExpired:
                 _write_progress(service_id, "error", "Installation failed",
@@ -1939,10 +2046,12 @@ def _launch_native_llama_server(env_path: Path, llama_bin: Path, llama_log: Path
     model_path = INSTALL_DIR / "data" / "models" / gguf_file
     reasoning = env.get("LLAMA_REASONING", "off")
     reasoning_fmt = {"off": "none", "on": "deepseek"}.get(reasoning, reasoning)
+    # Honour the unified BIND_ADDRESS knob (PR #964); empty/missing → loopback.
+    bind_addr = env.get("BIND_ADDRESS", "").strip() or "127.0.0.1"
     with open(llama_log, "a") as log_f:
         proc = subprocess.Popen(
             [str(llama_bin),
-             "--host", "0.0.0.0", "--port", "8080",
+             "--host", bind_addr, "--port", "8080",
              "--model", str(model_path),
              "--ctx-size", ctx_size,
              "--n-gpu-layers", "999",
@@ -2231,22 +2340,22 @@ def main():
     # macOS/Windows: 127.0.0.1 (Docker Desktop routes host.docker.internal to loopback)
     # Linux: Docker bridge gateway IP (containers reach via host-gateway,
     #   LAN devices cannot — the bridge is a virtual interface).
-    #   Falls back to 0.0.0.0 if detection fails.
+    #   Falls back to 127.0.0.1 if detection fails.
     bind_addr = env.get("DREAM_AGENT_BIND", "")
     bind_from_env = bool(bind_addr)
     if not bind_addr:
         if platform.system() in ("Darwin", "Windows"):
             bind_addr = "127.0.0.1"
         else:
-            bind_addr = _detect_docker_bridge_gateway() or "0.0.0.0"
+            bind_addr = _detect_docker_bridge_gateway() or "127.0.0.1"
 
     server = ThreadedHTTPServer((bind_addr, port), AgentHandler)
     signal.signal(signal.SIGTERM, lambda *_: server.shutdown())
     logger.info("Dream Host Agent v%s listening on %s:%d", VERSION, bind_addr, port)
-    if bind_addr == "0.0.0.0" and not bind_from_env:
+    if bind_addr == "127.0.0.1" and not bind_from_env and platform.system() not in ("Darwin", "Windows"):
         logger.warning(
-            "Agent is listening on all interfaces (bridge detection failed). "
-            "Set DREAM_AGENT_BIND=<bridge-ip> in .env to restrict."
+            "Docker bridge detection failed, using loopback (127.0.0.1). "
+            "Containers may not reach the agent. Set DREAM_AGENT_BIND=<bridge-ip> in .env."
         )
     logger.info("Install dir: %s | GPU: %s | Tier: %s", INSTALL_DIR, GPU_BACKEND, TIER)
     try:

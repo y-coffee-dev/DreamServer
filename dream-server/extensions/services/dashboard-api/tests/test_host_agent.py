@@ -22,6 +22,7 @@ _to_bash_path = _mod._to_bash_path
 resolve_compose_flags = _mod.resolve_compose_flags
 validate_core_recreate_ids = _mod.validate_core_recreate_ids
 invalidate_compose_cache = _mod.invalidate_compose_cache
+_post_install_core_recreate = _mod._post_install_core_recreate
 
 
 # --- _parse_mem_value ---
@@ -281,6 +282,121 @@ class TestInstallHookEnvAllowlist:
         assert '_resolve_hook(ext_dir, "post_install")' in src, (
             "setup_hook must use _resolve_hook(..., 'post_install'); "
             "the legacy _resolve_setup_hook has been removed"
+        )
+
+
+# --- Install "up -d" must not use --no-deps (regression) ---
+#
+# _handle_install previously passed --no-deps to `docker compose up -d`, which
+# prevented an extension's private sidecar services (declared in its own
+# compose fragment) from starting — including cross-extension depends_on
+# relationships like perplexica -> searxng. The fix removes --no-deps from
+# the install path only; docker_compose_recreate (used for core-service
+# force-recreate after a model swap) intentionally keeps --no-deps.
+
+
+class TestInstallStartCommandNoDeps:
+
+    def _install_source(self):
+        import inspect
+        return inspect.getsource(_mod.AgentHandler._handle_install)
+
+    def _recreate_source(self):
+        import inspect
+        return inspect.getsource(_mod.docker_compose_recreate)
+
+    def test_install_up_command_does_not_pass_no_deps(self):
+        src = self._install_source()
+        assert '"--no-deps"' not in src and "'--no-deps'" not in src, (
+            "_handle_install must not pass --no-deps to `docker compose up -d`; "
+            "extensions with private sidecars or cross-extension depends_on "
+            "need compose to bring dependencies up."
+        )
+
+    def test_docker_compose_recreate_still_uses_no_deps(self):
+        src = self._recreate_source()
+        assert '"--no-deps"' in src or "'--no-deps'" in src, (
+            "docker_compose_recreate must keep --no-deps; "
+            "core-service recreation (e.g. after a model swap) is intentionally "
+            "scoped to the named services only."
+        )
+
+
+# --- _post_install_core_recreate ---
+#
+# openclaw's compose.yaml adds OPENAI_API_BASE_URLS to open-webui as an overlay;
+# `docker compose up -d openclaw` (used by _handle_install) won't pick up
+# overlay changes targeting already-running core services without
+# `--force-recreate`. Hence the post-install recreate of open-webui whenever
+# openclaw is installed.
+
+
+class TestPostInstallCoreRecreate:
+
+    def test_openclaw_triggers_open_webui_recreate(self, monkeypatch):
+        calls = []
+
+        def _fake_recreate(ids):
+            calls.append(list(ids))
+            return True, ""
+
+        monkeypatch.setattr(_mod, "docker_compose_recreate", _fake_recreate)
+        _post_install_core_recreate("openclaw")
+        assert calls == [["open-webui"]]
+
+    def test_non_openclaw_service_is_noop(self, monkeypatch):
+        calls = []
+
+        def _fake_recreate(ids):
+            calls.append(list(ids))
+            return True, ""
+
+        monkeypatch.setattr(_mod, "docker_compose_recreate", _fake_recreate)
+        for svc in ("litellm", "n8n", "perplexica", "whisper", "comfyui"):
+            _post_install_core_recreate(svc)
+        assert calls == []
+
+    def test_recreate_failure_is_swallowed(self, monkeypatch):
+        """Install must not fail if the post-install recreate errors — openclaw
+        is already running; the overlay just won't take effect until a manual
+        core restart."""
+
+        def _fake_recreate(_ids):
+            return False, "docker compose exploded"
+
+        monkeypatch.setattr(_mod, "docker_compose_recreate", _fake_recreate)
+        # Must not raise
+        _post_install_core_recreate("openclaw")
+
+
+class TestRunInstallCallsPostInstallRecreate:
+    """Source-level check that the install closure calls
+    _post_install_core_recreate after the "started" progress write.
+
+    The dynamic flow runs in a daemon thread + nested closure, which makes
+    runtime mocking fragile (see TestInstallHookEnvAllowlist for the same
+    reasoning). Source-level assertion is sufficient to lock the wiring."""
+
+    def _install_source(self):
+        import inspect
+        return inspect.getsource(_mod.AgentHandler._handle_install)
+
+    def test_install_calls_post_install_core_recreate(self):
+        src = self._install_source()
+        assert "_post_install_core_recreate(service_id)" in src, (
+            "_run_install must invoke _post_install_core_recreate(service_id) "
+            "after emitting the 'started' progress record"
+        )
+
+    def test_recreate_is_after_started_progress_write(self):
+        src = self._install_source()
+        started_idx = src.find('"started"')
+        recreate_idx = src.find("_post_install_core_recreate(")
+        assert started_idx != -1, "expected 'started' progress write in _handle_install"
+        assert recreate_idx != -1, "expected _post_install_core_recreate call in _handle_install"
+        assert started_idx < recreate_idx, (
+            "_post_install_core_recreate must run AFTER the 'started' progress "
+            "write so the client sees success even if the recreate fails"
         )
 
 

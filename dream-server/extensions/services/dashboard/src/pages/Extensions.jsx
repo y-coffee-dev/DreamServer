@@ -6,34 +6,13 @@ import {
 import { useState, useEffect, useRef } from 'react'
 import { DependencyBadges, DependencyConfirmDialog, DisableDependentWarning } from '../components/DependencyBadges'
 import { TemplatePicker } from '../components/TemplatePicker'
+import { getTemplateStatus } from '../lib/templates'
 
-// Services defined in docker-compose.base.yml — always running, not togglable via templates
-const BASE_COMPOSE_SERVICES = new Set(['llama-server', 'open-webui', 'dashboard', 'dashboard-api'])
+// Re-export so existing importers of getTemplateStatus from this module keep working.
+export { getTemplateStatus }
 
 // API/backend services with no user-facing web UI — show badge instead of port link.
 const HEADLESS_EXTENSIONS = new Set(['embeddings', 'tts', 'whisper', 'privacy-shield'])
-
-// Compute template status from catalog extensions data.
-// Returns one of: 'available', 'in_progress', 'applied', 'has_errors'
-// Precedence: has_errors > in_progress > applied > available
-export function getTemplateStatus(template, extensions) {
-  const services = template.services || []
-  const serviceStatus = {}
-  for (const svcId of services) {
-    if (BASE_COMPOSE_SERVICES.has(svcId)) {
-      serviceStatus[svcId] = 'enabled'
-      continue
-    }
-    const ext = extensions.find(e => e.id === svcId)
-    serviceStatus[svcId] = ext ? ext.status : undefined
-  }
-  const statuses = Object.values(serviceStatus)
-  if (statuses.some(s => s === 'error')) return 'has_errors'
-  if (statuses.some(s => s === 'installing' || s === 'setting_up')) return 'in_progress'
-  const allEnabled = statuses.every(s => s === 'enabled')
-  if (allEnabled) return 'applied'
-  return 'available'
-}
 
 // Auth: nginx injects "Authorization: Bearer ${DASHBOARD_API_KEY}" via
 // proxy_set_header for all /api/ requests (see nginx.conf).  All fetches

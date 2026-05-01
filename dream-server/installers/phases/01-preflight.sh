@@ -84,5 +84,72 @@ if [[ -d "$INSTALL_DIR" ]]; then
     signal "Existing install detected. Secrets and data will be preserved."
 fi
 
+# Filesystem POSIX-permission check.
+# Phase 06 runs `chmod 600 $INSTALL_DIR/.env` to lock down secrets. On exFAT,
+# FAT32, fuseblk (NTFS via ntfs-3g), 9p and DrvFs that chmod is a silent no-op
+# — the secrets file ends up world-readable. Refuse install up front so the
+# user can pick a POSIX-native path.
+check_install_dir_filesystem() {
+    local probe="$INSTALL_DIR"
+    while [[ -n "$probe" && ! -e "$probe" ]]; do
+        probe="$(dirname "$probe")"
+    done
+    [[ -z "$probe" ]] && probe="/"
+
+    local fs_type=""
+    fs_type=$(stat -fc %T "$probe" 2>/dev/null || true)
+    fs_type="${fs_type,,}"  # lowercase
+    INSTALL_FS_TYPE="${fs_type:-unknown}"
+
+    case "$fs_type" in
+        fuseblk|msdos|exfat|vfat|fat|9p|drvfs|ntfs|ntfs-3g)
+            error "INSTALL_DIR ($INSTALL_DIR) is on a ${fs_type} filesystem.
+
+Dream Server stores secrets in $INSTALL_DIR/.env and locks them with
+chmod 600. ${fs_type} silently ignores POSIX permissions, which would
+leave the secrets file world-readable.
+
+Pick a path on a POSIX-native filesystem (ext4, btrfs, xfs, zfs) and
+re-run, e.g.:  INSTALL_DIR=\"\$HOME/dream-server\" $0"
+            ;;
+    esac
+    log "INSTALL_DIR filesystem: ${INSTALL_FS_TYPE}"
+}
+
+# Docker Desktop file-sharing probe — only meaningful when Docker Desktop
+# is in use (most Linux installs use the native daemon and skip this).
+check_docker_desktop_sharing() {
+    command -v docker >/dev/null 2>&1 || return 0
+
+    local os_string=""
+    os_string=$(docker info --format '{{json .OperatingSystem}}' 2>/dev/null || true)
+    case "$os_string" in
+        *"Docker Desktop"*) ;;
+        *) return 0 ;;
+    esac
+
+    local probe="$INSTALL_DIR"
+    while [[ -n "$probe" && ! -e "$probe" ]]; do
+        probe="$(dirname "$probe")"
+    done
+    [[ -z "$probe" ]] && probe="/"
+
+    local out=""
+    out=$(docker run --rm -v "${probe}:/check:ro" alpine true 2>&1) || true
+    if echo "$out" | grep -qiE "not shared from the host|Mounts denied|file sharing|filesharing"; then
+        error "Docker Desktop cannot bind-mount $INSTALL_DIR.
+
+Add the path to Docker Desktop > Settings > Resources > File Sharing,
+apply, then re-run this installer.
+
+Probe output:
+$(printf '%s\n' "$out" | sed 's/^/    /')"
+    fi
+    log "Docker Desktop file sharing OK"
+}
+
+check_install_dir_filesystem
+check_docker_desktop_sharing
+
 ai_ok "Pre-flight checks passed."
 signal "No cloud dependencies required for core operation."

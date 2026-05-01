@@ -165,7 +165,7 @@ Write-DreamBanner
 #  Phase 03 → $enableVoice, $enableWorkflows, $enableRag, $enableOpenClaw, $openClawConfig
 #  Phase 04 → $requirementsMet
 #  Phase 05 → $dockerComposeCmd
-#  Phase 06 → $envResult (EnvPath, SearxngSecret, OpenclawToken, DashboardKey)
+#  Phase 06 → $envResult (EnvPath, SearxngSecret, OpenclawToken, DreamAgentKey)
 #  Phase 07 → (no output -- tools installed to $env:USERPROFILE)
 
 . (Join-Path $PhasesDir "01-preflight.ps1")
@@ -320,6 +320,20 @@ if ($dryRun) {
                 }
             }
 
+            # Honour the unified BIND_ADDRESS knob (PR #964) for native servers.
+            # Phase 06 has already written BIND_ADDRESS to .env (0.0.0.0 with -Lan,
+            # 127.0.0.1 otherwise). Read once and reuse for both Lemonade and
+            # llama.cpp launches below. Empty/missing → loopback.
+            $_envPath = Join-Path $installDir ".env"
+            $bindAddr = "127.0.0.1"
+            if (Test-Path $_envPath) {
+                $_envText = Get-Content $_envPath -Raw
+                if ($_envText -match "(?m)^BIND_ADDRESS=(.*)$") {
+                    $_match = $Matches[1].Trim().Trim('"').Trim("'")
+                    if (-not [string]::IsNullOrWhiteSpace($_match)) { $bindAddr = $_match }
+                }
+            }
+
             if ($useLemonade) {
                 # ── Start Lemonade server ──
                 # --extra-models-dir: Lemonade auto-discovers GGUF files in this directory
@@ -331,7 +345,7 @@ if ($dryRun) {
                 $lemonadeArgs = @(
                     "serve",
                     "--port", "$($script:LEMONADE_PORT)",
-                    "--host", "0.0.0.0",
+                    "--host", $bindAddr,
                     "--no-tray",
                     "--llamacpp", "vulkan",
                     "--extra-models-dir", $modelsDir
@@ -414,7 +428,7 @@ if ($dryRun) {
                 $modelFullPath = Join-Path (Join-Path $installDir "data\models") $tierConfig.GgufFile
                 $llamaArgs = @(
                     "--model", $modelFullPath,
-                    "--host", "0.0.0.0",
+                    "--host", $bindAddr,
                     "--port", "8080",
                     "--n-gpu-layers", "999",
                     "--ctx-size", "$($tierConfig.MaxContext)"
@@ -875,6 +889,23 @@ if ($allHealthy) {
     Write-Host "  .\dream.ps1 status" -ForegroundColor Cyan
     Write-Host ""
     Write-SuccessCard
+}
+
+# ── Pre-mark setup wizard complete ────────────────────────────────────────────
+# The dashboard-api reads ${INSTALL_DIR}/data/config/setup-complete.json
+# (mounted at /data/config/setup-complete.json inside the container) to decide
+# first_run state. Writing this here prevents the wizard from reappearing on
+# every visit after a fresh install. Non-fatal.
+try {
+    $setupConfigDir = Join-Path $installDir "data\config"
+    $setupCompleteFile = Join-Path $setupConfigDir "setup-complete.json"
+    New-Item -Path $setupConfigDir -ItemType Directory -Force | Out-Null
+    $completedAt = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+    $payload = @{ completed_at = $completedAt; version = "1.0.0" } | ConvertTo-Json -Compress
+    Set-Content -Path $setupCompleteFile -Value $payload -Encoding UTF8
+    Write-AISuccess "Setup wizard pre-marked complete"
+} catch {
+    Write-AIWarn "Could not write setup-complete.json (non-fatal): $_"
 }
 
 # ── Summary JSON (for CI / automation) ───────────────────────────────────────
