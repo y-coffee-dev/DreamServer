@@ -23,26 +23,33 @@ else
 
     # Ensure Node.js/npm is available (needed for Claude Code and Codex)
     if ! command -v npm &> /dev/null; then
+        # In non-interactive mode, fail fast if sudo requires a password — otherwise
+        # the sudo prompt hangs and the trailing error-mask silently skips Node.js,
+        # leaving downstream Claude Code / Codex CLI installs to be skipped without
+        # any visible failure. See pattern in 05-docker.sh:61-65.
+        if [[ "${INTERACTIVE:-true}" != "true" ]] && ! sudo -n true 2>/dev/null; then
+            error "Cannot install Node.js: sudo password required but running in --non-interactive mode. Re-run interactively or configure NOPASSWD sudo."
+        fi
         ai "Installing Node.js..."
         case "$PKG_MANAGER" in
             apt)
                 tmpfile=$(mktemp /tmp/nodesource-setup.XXXXXX.sh)
                 if curl -fsSL --max-time 300 https://deb.nodesource.com/setup_22.x -o "$tmpfile" 2>/dev/null; then
-                    sudo -E bash "$tmpfile" 2>&1 | tee -a "$LOG_FILE" || true
+                    sudo -E bash "$tmpfile" 2>&1 | tee -a "$LOG_FILE" || ai_warn "Failed to run NodeSource apt setup script (non-fatal — Claude Code/Codex CLI will be skipped)"
                 fi
                 rm -f "$tmpfile"
-                sudo apt-get install -y nodejs 2>&1 | tee -a "$LOG_FILE" || true
+                sudo apt-get install -y nodejs 2>&1 | tee -a "$LOG_FILE" || ai_warn "Failed to install nodejs via apt-get (non-fatal — Claude Code/Codex CLI will be skipped)"
                 ;;
             dnf)
                 sudo dnf module install -y nodejs:22 2>&1 | tee -a "$LOG_FILE" || \
-                    sudo dnf install -y nodejs 2>&1 | tee -a "$LOG_FILE" || true
+                    sudo dnf install -y nodejs 2>&1 | tee -a "$LOG_FILE" || ai_warn "Failed to install nodejs via dnf (non-fatal — Claude Code/Codex CLI will be skipped)"
                 ;;
             pacman)
-                sudo pacman -S --noconfirm --needed nodejs npm 2>&1 | tee -a "$LOG_FILE" || true
+                sudo pacman -S --noconfirm --needed nodejs npm 2>&1 | tee -a "$LOG_FILE" || ai_warn "Failed to install nodejs via pacman (non-fatal — Claude Code/Codex CLI will be skipped)"
                 ;;
             zypper)
                 sudo zypper --non-interactive install nodejs22 2>&1 | tee -a "$LOG_FILE" || \
-                    sudo zypper --non-interactive install nodejs 2>&1 | tee -a "$LOG_FILE" || true
+                    sudo zypper --non-interactive install nodejs 2>&1 | tee -a "$LOG_FILE" || ai_warn "Failed to install nodejs via zypper (non-fatal — Claude Code/Codex CLI will be skipped)"
                 ;;
             *)
                 ai_warn "Unknown package manager — cannot install Node.js automatically"
