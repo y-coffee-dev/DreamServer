@@ -145,6 +145,11 @@ generate_dream_env() {
         if [[ "$(uname -m)" == "arm64" ]] && [[ -z "$(read_env_value "$env_path" "DREAMFORGE_PULL_POLICY")" ]]; then
             upsert_env_value "$env_path" "DREAMFORGE_PULL_POLICY" "build"
         fi
+        # Upsert SHIELD_API_KEY when missing (Privacy Shield cross-service auth)
+        if [[ -z "$(read_env_value "$env_path" "SHIELD_API_KEY")" ]]; then
+            upsert_env_value "$env_path" "SHIELD_API_KEY" "$(new_secure_hex 32)"
+        fi
+
         # HOST_LAN_IP backfill: the fresh-install heredoc below populates
         # HOST_LAN_IP when BIND_ADDRESS=0.0.0.0 was pre-set, so openclaw can
         # extend allowedOrigins for LAN clients. Pre-existing installs that
@@ -181,6 +186,8 @@ generate_dream_env() {
     dashboard_api_key=$(new_secure_hex 32)
     local dream_agent_key
     dream_agent_key=$(new_secure_hex 32)
+    local shield_api_key
+    shield_api_key=$(new_secure_hex 32)
     local openclaw_token
     openclaw_token=$(new_secure_hex 24)
     local qdrant_api_key
@@ -295,6 +302,7 @@ LANGFUSE_PORT=3006
 WEBUI_SECRET=${webui_secret}
 DASHBOARD_API_KEY=${dashboard_api_key}
 DREAM_AGENT_KEY=${dream_agent_key}
+SHIELD_API_KEY=${shield_api_key}
 N8N_USER=admin@dreamserver.local
 N8N_PASS=${n8n_pass}
 LITELLM_KEY=${litellm_key}
