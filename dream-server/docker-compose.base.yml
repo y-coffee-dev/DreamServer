@@ -213,6 +213,14 @@ services:
       # the redemption host sees the cookie); functional for single-host
       # setups but breaks subdomain SSO.
       - DREAM_COOKIE_DOMAIN=${DREAM_COOKIE_DOMAIN:-}
+      # URLs consumed by scripts/dream-test-functional.sh (executed inside this
+      # container by /api/setup/test). The script's own `localhost:<port>`
+      # defaults are correct for host-side runs but unreachable from inside
+      # the container; explicitly point at docker network names here.
+      - LLM_URL=${LLM_URL:-${LLM_API_URL:-http://llama-server:8080}}
+      - TTS_URL=${TTS_URL:-http://tts:8880}
+      - EMBEDDING_URL=${EMBEDDING_URL:-http://embeddings:80}
+      - WHISPER_URL=${WHISPER_URL:-http://whisper:8000}
     volumes:
       - ./scripts:/dream-server/scripts:ro
       - ./config:/dream-server/config:ro

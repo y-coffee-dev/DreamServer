@@ -43,6 +43,29 @@ bash tests/contracts/test-port-contracts.sh
 echo "[contract] Windows AMD local compose readiness"
 bash tests/contracts/test-windows-amd-local-compose.sh
 
+echo "[contract] dashboard diagnostics route through docker network URLs"
+if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+  tmp_env="$(mktemp)"
+  trap 'rm -f "$tmp_env"' EXIT
+  cat > "$tmp_env" <<'ENV_EOF'
+WEBUI_SECRET=ci-placeholder
+LLM_API_URL=http://litellm:4000
+ENV_EOF
+  rendered="$(docker compose --env-file "$tmp_env" -f docker-compose.base.yml config dashboard-api)"
+  grep -q 'LLM_URL: http://litellm:4000' <<<"$rendered" \
+    || { echo "[FAIL] dashboard-api diagnostics LLM_URL must follow LLM_API_URL when LLM_URL is unset"; exit 1; }
+  grep -q 'OLLAMA_URL: http://litellm:4000' <<<"$rendered" \
+    || { echo "[FAIL] dashboard-api OLLAMA_URL lost LLM_API_URL routing"; exit 1; }
+  grep -q 'TTS_URL: http://tts:8880' <<<"$rendered" \
+    || { echo "[FAIL] dashboard-api diagnostics TTS_URL must use docker network hostname"; exit 1; }
+  grep -q 'EMBEDDING_URL: http://embeddings:80' <<<"$rendered" \
+    || { echo "[FAIL] dashboard-api diagnostics EMBEDDING_URL must use docker network hostname"; exit 1; }
+  grep -q 'WHISPER_URL: http://whisper:8000' <<<"$rendered" \
+    || { echo "[FAIL] dashboard-api diagnostics WHISPER_URL must use docker network hostname"; exit 1; }
+else
+  echo "[SKIP] docker compose unavailable"
+fi
+
 echo "[contract] resolver scripts executable"
 for s in scripts/build-capability-profile.sh scripts/classify-hardware.sh scripts/load-backend-contract.sh scripts/resolve-compose-stack.sh scripts/preflight-engine.sh scripts/dream-doctor.sh scripts/simulate-installers.sh; do
   test -x "$s" || { echo "[FAIL] script not executable: $s"; exit 1; }
