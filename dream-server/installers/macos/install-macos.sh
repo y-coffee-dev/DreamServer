@@ -64,6 +64,9 @@ TIER_OVERRIDE=""
 ENABLE_VOICE=false
 ENABLE_WORKFLOWS=false
 ENABLE_RAG=false
+# Hermes Agent is the new default agent as of 2026-05-12. OpenClaw is
+# deprecated and gates behind --openclaw for the deprecation release.
+ENABLE_HERMES=true
 ENABLE_OPENCLAW=false
 ENABLE_BRAVE_SEARCH=false
 # Langfuse defaults OFF because its clickhouse + postgres + minio stack adds
@@ -72,6 +75,7 @@ ENABLE_BRAVE_SEARCH=false
 # --all run can still suppress Langfuse.
 ENABLE_LANGFUSE=false
 NO_LANGFUSE_EXPLICIT=false
+OPENCLAW_EXPLICIT=false
 ALL_FEATURES=false
 CLOUD_MODE=false
 
@@ -84,7 +88,10 @@ while [[ $# -gt 0 ]]; do
         --voice)         ENABLE_VOICE=true; shift ;;
         --workflows)     ENABLE_WORKFLOWS=true; shift ;;
         --rag)           ENABLE_RAG=true; shift ;;
-        --openclaw)      ENABLE_OPENCLAW=true; shift ;;
+        --hermes)        ENABLE_HERMES=true; shift ;;
+        --no-hermes)     ENABLE_HERMES=false; shift ;;
+        --openclaw)      ENABLE_OPENCLAW=true; OPENCLAW_EXPLICIT=true; shift ;;
+        --no-openclaw)   ENABLE_OPENCLAW=false; OPENCLAW_EXPLICIT=true; shift ;;
         --langfuse)      ENABLE_LANGFUSE=true; shift ;;
         --no-langfuse)   ENABLE_LANGFUSE=false; NO_LANGFUSE_EXPLICIT=true; shift ;;
         --all)           ALL_FEATURES=true; shift ;;
@@ -97,7 +104,11 @@ if $ALL_FEATURES; then
     ENABLE_VOICE=true
     ENABLE_WORKFLOWS=true
     ENABLE_RAG=true
-    ENABLE_OPENCLAW=true
+    # --all enables the new default Hermes Agent. OpenClaw stays opt-in via
+    # --openclaw during the deprecation release; will be removed entirely
+    # in the next release.
+    ENABLE_HERMES=true
+    $OPENCLAW_EXPLICIT || ENABLE_OPENCLAW=false
     # --all enables Langfuse unless the user explicitly passed --no-langfuse.
     $NO_LANGFUSE_EXPLICIT || ENABLE_LANGFUSE=true
 fi
@@ -151,6 +162,11 @@ _compute_launchd_path() {
 
 # ── Resolve install directory ──
 INSTALL_DIR="${DS_INSTALL_DIR}"
+
+if ! $OPENCLAW_EXPLICIT && [[ -f "${INSTALL_DIR}/extensions/services/openclaw/compose.yaml" ]]; then
+    ENABLE_OPENCLAW=true
+    ai "Existing OpenClaw install detected; preserving it for this deprecation release"
+fi
 
 # Initialize log file
 mkdir -p "$(dirname "$DS_LOG_FILE")"
@@ -381,12 +397,14 @@ if ! $NON_INTERACTIVE && ! $ALL_FEATURES && ! $DRY_RUN; then
     case "${feature_choice:-1}" in
         1)
             ENABLE_VOICE=true; ENABLE_WORKFLOWS=true
-            ENABLE_RAG=true; ENABLE_OPENCLAW=true
+            ENABLE_RAG=true; ENABLE_HERMES=true
+            ENABLE_OPENCLAW=false  # deprecated; Hermes is the default
             ENABLE_LANGFUSE=true
             ;;
         2)
             ENABLE_VOICE=false; ENABLE_WORKFLOWS=false
-            ENABLE_RAG=false; ENABLE_OPENCLAW=false
+            ENABLE_RAG=false; ENABLE_HERMES=false
+            ENABLE_OPENCLAW=false
             ENABLE_LANGFUSE=false
             ;;
         3)
@@ -396,14 +414,17 @@ if ! $NON_INTERACTIVE && ! $ALL_FEATURES && ! $DRY_RUN; then
             [[ "$yn" =~ ^[yY] ]] && ENABLE_WORKFLOWS=true
             read -r -p "  Enable RAG (Qdrant + embeddings)? [y/N] " yn < /dev/tty
             [[ "$yn" =~ ^[yY] ]] && ENABLE_RAG=true
-            read -r -p "  Enable OpenClaw (AI agents)?      [y/N] " yn < /dev/tty
+            read -r -p "  Enable Hermes Agent (default AI agent)? [Y/n] " yn < /dev/tty
+            [[ "$yn" =~ ^[nN] ]] && ENABLE_HERMES=false || ENABLE_HERMES=true
+            read -r -p "  Enable OpenClaw (DEPRECATED — Hermes replaces it)? [y/N] " yn < /dev/tty
             [[ "$yn" =~ ^[yY] ]] && ENABLE_OPENCLAW=true
             read -r -p "  Enable Langfuse (LLM observability, ~500MB)? [y/N] " yn < /dev/tty
             [[ "$yn" =~ ^[yY] ]] && ENABLE_LANGFUSE=true
             ;;
         *)
             ENABLE_VOICE=true; ENABLE_WORKFLOWS=true
-            ENABLE_RAG=true; ENABLE_OPENCLAW=true
+            ENABLE_RAG=true; ENABLE_HERMES=true
+            ENABLE_OPENCLAW=false  # deprecated; Hermes is the default
             ENABLE_LANGFUSE=true
             ;;
     esac
@@ -413,7 +434,8 @@ ai "Features:"
 info_box "  Voice:" "$(if $ENABLE_VOICE; then echo enabled; else echo disabled; fi)"
 info_box "  Workflows:" "$(if $ENABLE_WORKFLOWS; then echo enabled; else echo disabled; fi)"
 info_box "  RAG:" "$(if $ENABLE_RAG; then echo enabled; else echo disabled; fi)"
-info_box "  OpenClaw:" "$(if $ENABLE_OPENCLAW; then echo enabled; else echo disabled; fi)"
+info_box "  Hermes:" "$(if $ENABLE_HERMES; then echo enabled; else echo disabled; fi)"
+info_box "  OpenClaw:" "$(if $ENABLE_OPENCLAW; then echo "enabled (DEPRECATED)"; else echo disabled; fi)"
 info_box "  Langfuse:" "$(if $ENABLE_LANGFUSE; then echo enabled; else echo disabled; fi)"
 
 # ============================================================================
@@ -426,6 +448,7 @@ if $DRY_RUN; then
     ai "[DRY RUN] Would copy source files"
     ai "[DRY RUN] Would generate .env with secrets"
     ai "[DRY RUN] Would generate SearXNG config"
+    $ENABLE_HERMES && ai "[DRY RUN] Would configure Hermes Agent (data: ${INSTALL_DIR}/data/hermes)"
     $ENABLE_OPENCLAW && ai "[DRY RUN] Would configure OpenClaw"
     $ENABLE_LANGFUSE && ai "[DRY RUN] Would enable Langfuse (LLM observability)"
 else
@@ -445,6 +468,9 @@ else
     mkdir -p "${INSTALL_DIR}/data/dreamforge"
     mkdir -p "${INSTALL_DIR}/data/ape"
     mkdir -p "${INSTALL_DIR}/data/token-spy"
+    mkdir -p "${INSTALL_DIR}/data/hermes"
+    mkdir -p "${INSTALL_DIR}/data/hermes-proxy/caddy-data"
+    mkdir -p "${INSTALL_DIR}/data/hermes-proxy/caddy-config"
     mkdir -p "${INSTALL_DIR}/data/langfuse/postgres"
     mkdir -p "${INSTALL_DIR}/data/langfuse/clickhouse"
     mkdir -p "${INSTALL_DIR}/data/langfuse/redis"
@@ -872,6 +898,7 @@ else
                 whisper|tts)   $ENABLE_VOICE || SKIP=true ;;
                 n8n)           $ENABLE_WORKFLOWS || SKIP=true ;;
                 qdrant|embeddings) $ENABLE_RAG || SKIP=true ;;
+                hermes|hermes-proxy) $ENABLE_HERMES || SKIP=true ;;
                 openclaw)      $ENABLE_OPENCLAW || SKIP=true ;;
                 langfuse)      $ENABLE_LANGFUSE || SKIP=true ;;
                 brave-search)  [[ "${ENABLE_BRAVE_SEARCH:-false}" == "true" ]] || SKIP=true ;;

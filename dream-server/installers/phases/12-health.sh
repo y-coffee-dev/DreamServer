@@ -7,7 +7,7 @@
 #          pre-download STT model
 #
 # Expects: DRY_RUN, GPU_BACKEND, ENABLE_VOICE, ENABLE_WORKFLOWS, ENABLE_RAG,
-#           ENABLE_OPENCLAW, LLM_MODEL, LOG_FILE, BGRN, AMB, NC,
+#           ENABLE_HERMES, ENABLE_OPENCLAW, LLM_MODEL, LOG_FILE, BGRN, AMB, NC,
 #           WHISPER_PORT, TTS_PORT, OPENCLAW_PORT,
 #           PERPLEXICA_PORT (:-3004), COMFYUI_PORT (:-8188),
 #           show_phase(), check_service(), ai(), ai_ok(), ai_warn(), signal()
@@ -36,6 +36,7 @@ if $DRY_RUN; then
     log "[DRY RUN] Would verify service health:"
     log "[DRY RUN]   - llama-server, Open WebUI, Perplexica, ComfyUI"
     log "[DRY RUN]   - Auto-configure Perplexica for ${LLM_MODEL:-default model}"
+    [[ "$ENABLE_HERMES" == "true" ]] && log "[DRY RUN]   - Hermes Agent + hermes-proxy"
     [[ "$ENABLE_OPENCLAW" == "true" ]] && log "[DRY RUN]   - OpenClaw"
     [[ "$ENABLE_VOICE" == "true" ]] && log "[DRY RUN]   - Whisper (STT), Kokoro (TTS), pre-download STT model"
     [[ "$ENABLE_WORKFLOWS" == "true" ]] && log "[DRY RUN]   - n8n"
@@ -57,6 +58,49 @@ _check_health() {
     if ! check_service "$@"; then
         HEALTH_FAILURES=$((HEALTH_FAILURES + 1))
     fi
+}
+
+_check_container_health() {
+    local name=$1
+    local container_name=$2
+    local max_attempts=${3:-60}
+    local docker_cmd="${DOCKER_CMD:-docker}"
+    local -a docker_cmd_arr=()
+    read -r -a docker_cmd_arr <<< "$docker_cmd"
+    [[ ${#docker_cmd_arr[@]} -gt 0 ]] || docker_cmd_arr=(docker)
+
+    printf "  ${GRN}...${NC} Waiting for %-20s " "$name"
+    for attempt in $(seq 1 "$max_attempts"); do
+        local state=""
+        state=$("${docker_cmd_arr[@]}" inspect --format '{{.State.Status}}' "$container_name" 2>/dev/null || echo "missing")
+        case "$state" in
+            exited|dead|missing)
+                printf "\r  ${RED}ERR${NC} %-55s\n" "$name container $state"
+                ai_warn "$name container is $state; not retrying health probe."
+                return 1
+                ;;
+        esac
+
+        local health=""
+        health=$("${docker_cmd_arr[@]}" inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container_name" 2>/dev/null || echo "missing")
+        case "$health" in
+            healthy)
+                printf "\r  ${BGRN}OK${NC} %-56s\n" "$name healthy"
+                return 0
+                ;;
+            running)
+                # No Docker healthcheck declared. Treat running as good enough.
+                printf "\r  ${BGRN}OK${NC} %-56s\n" "$name running"
+                return 0
+                ;;
+        esac
+
+        sleep 5
+    done
+
+    printf "\r  ${AMB}WARN${NC} %-54s\n" "$name delayed (container health not healthy yet)"
+    ai_warn "$name container health is not healthy yet. I will continue."
+    return 1
 }
 
 # Core service health checks with adaptive timeouts
@@ -155,6 +199,16 @@ fi
 
 # Extension service health checks with adaptive timeouts
 dream_progress 94 "health" "Checking extension services"
+# Hermes is intentionally internal-only: its port is exposed only inside the
+# Docker network, not bound to the host. Wait on the container healthcheck
+# instead of curling localhost:9119, which would fail on a correct install.
+if [[ "$ENABLE_HERMES" == "true" ]]; then
+    if ! _check_container_health "Hermes Agent" "$(sr_container hermes)" 60; then
+        HEALTH_FAILURES=$((HEALTH_FAILURES + 1))
+    fi
+fi
+# hermes-proxy is the LAN-facing entry and has an anonymous /health endpoint.
+[[ "$ENABLE_HERMES" == "true" ]] && _check_health "Hermes Proxy" "http://127.0.0.1:${SERVICE_PORTS[hermes-proxy]:-9120}${SERVICE_HEALTH[hermes-proxy]:-/health}" 60 5 "$(sr_container hermes-proxy)"
 [[ "$ENABLE_OPENCLAW" == "true" ]] && _check_health "OpenClaw" "http://127.0.0.1:${SERVICE_PORTS[openclaw]:-7860}${SERVICE_HEALTH[openclaw]:-/}" 150 10 "$(sr_container openclaw)"
 systemctl --user is-active opencode-web &>/dev/null && _check_health "OpenCode Web" "http://127.0.0.1:3003/" 10 5
 # Whisper: 150 attempts * adaptive backoff = up to ~20 minutes (model download on first start)
