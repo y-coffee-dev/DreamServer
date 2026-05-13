@@ -27,6 +27,8 @@ services:
       - --host
       - "0.0.0.0"
       - --no-tray
+      - --llamacpp
+      - "${LEMONADE_LLAMACPP:-auto}"
       - --llamacpp-args
       - "--metrics --host 0.0.0.0 --split-mode ${LLAMA_ARG_SPLIT_MODE:-layer}"
       - --extra-models-dir
