@@ -23,7 +23,9 @@ TESTS_FAILED=0
 
 # Check dependencies
 if ! command -v jq &>/dev/null; then
-    echo -e "${RED}ERROR: jq is required but not installed${NC}"
+    echo -e "${RED}ERROR: jq is required but not installed.${NC}" >&2
+    echo "Install it: apt-get install -y jq | dnf install -y jq | brew install jq" >&2
+    echo "(jq is a hard project dependency — installers/phases/01-preflight.sh auto-installs it on a full run.)" >&2
     exit 1
 fi
 
